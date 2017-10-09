@@ -5,6 +5,7 @@
 #define RECORD_SIZE sizeof(movies) / sizeof(movies[0])
 
 typedef enum { false, true } bool;
+enum PlanNodeType { select_node_t, scan_node_t };
 
 typedef struct record {
 	unsigned int id;
@@ -20,83 +21,90 @@ Record movies[] = {
 // empty string vs NULL
 Record empty_record = { 1, "", ""};
 
-
-Record scanNext(void *self);
-typedef struct scan_node {
-	Record (*next)(void *self);
+typedef struct scan_node_state {
 	unsigned int current_record_idx;
-} ScanNode;
+} ScanNodeState;
 
-ScanNode *makeScanNode(void) {
-	ScanNode *node = malloc(sizeof(ScanNode));
+typedef struct select_node_state {
+	bool (*filter)(Record*);
+} SelectNodeState;
+
+typedef struct PlanNode PlanNode;
+struct PlanNode {
+	Record *(*next)(void *self);
+	PlanNode *child;
+	enum PlanNodeType nodeType;
+	union {
+		SelectNodeState *selectNodeState;
+		ScanNodeState *scanNodeState; 
+	};
+};
+
+
+Record *scanNext(void *self);
+
+PlanNode *makeScanNode(void) {
+	PlanNode *node = malloc(sizeof(PlanNode));
+
 	if (node != NULL) {
 		node->next = &scanNext;
-		node->current_record_idx = 0;
+		node->scanNodeState = malloc(sizeof(ScanNodeState));
+		node->scanNodeState->current_record_idx = 0;
 	}
 	return node;
 }
 
-Record scanNext(void *self) {
-	ScanNode *scan_node = self;
-	unsigned int current_record_idx = scan_node->current_record_idx;
+Record *scanNext(void *self) {
+	PlanNode *scan_node = self;
+	unsigned int current_record_idx = scan_node->scanNodeState->current_record_idx;
 
 	if (current_record_idx < RECORD_SIZE)
-		return movies[scan_node->current_record_idx++];
+		return &movies[scan_node->scanNodeState->current_record_idx++];
 	else 
-		return empty_record;
+		return NULL;
 }
 
-
 // select node 
-Record selectNext(void *self);
-bool filterPredicate(Record target, char *fields[]);
+Record *selectNext(void *self);
 
-typedef struct select_node {
-	Record (*next)(void *self);
-	ScanNode *scan_node;
-	bool (*filter)(Record, char *f[]);
-	char **query;
-} SelectNode;
+PlanNode *makeSelectNode(bool (*predicate)(Record *)) {
 
-SelectNode *makeSelectNode(char *query[], int query_size) {
-	SelectNode *node = malloc(sizeof(SelectNode));
+	PlanNode *node = malloc(sizeof(PlanNode));
 	if (node != NULL) {
 		node->next = &selectNext;
-		node->scan_node = makeScanNode();
-		node->filter = &filterPredicate;
-		node->query = query;
+		node->selectNodeState = malloc(sizeof(SelectNodeState));
+		node->selectNodeState->filter = predicate;
 	}
 	return node;
 }
 
-typedef struct record_list {
-	Record current;
-	Record *next;
-} RecordList;
+Record *selectNext(void *self) {
+	PlanNode *select_node = self;
+	PlanNode *child_node = select_node->child;
 
-Record selectNext(void *self) {
-	SelectNode *select_node = self;
-	ScanNode *scan_node = select_node->scan_node;
-	Record current_record = scan_node->next(scan_node);
+	for (;;) {
+		Record *current_record = child_node->next(child_node);
 
-	printf("YOLO: %s\n", *(select_node->query));
-	printf("filter: %s\n", select_node->filter(current_record, select_node->query) ? "yes" : "no");
-	if (select_node->filter(current_record, select_node->query))
-		return current_record;
-	else 
-		return empty_record;
+		if (current_record != NULL) {
+			if (select_node->selectNodeState->filter(current_record)) {
+				return current_record;
+			}
+		} else {
+			return NULL;
+		}
+
+	}
+
+	return NULL;
 }
 
-bool filterPredicate(Record source, char *fields[]) {
-	return (strcmp(source.title, fields[2]) == 0) ? true : false;
+bool filterPredicate(Record *source) {
+	return (strcmp(source->title, "the pianist") == 0) ? true : false;
 }
 
-typedef union {
-	SelectNode *selectNode;
-	ScanNode *fileScanNode; 
-} PlanNode;
-
-
+bool fn(Record *source) {
+	return (strcmp(source->title, "fight club") == 0) ? true : false;
+}
 
 int main(void) {
 // [
@@ -105,30 +113,15 @@ int main(void) {
 //   ["SELECTION", ["movie_id", "EQUALS", "5000"]],
 //   ["FILESCAN", ["ratings"]]
 // ]
-	ScanNode *scanner = makeScanNode();  
-	printf("movie: %s\n", scanner->next(scanner).title);
-	printf("movie: %s\n", scanner->next(scanner).title);
-	printf("movie: %s\n", scanner->next(scanner).title);
-	printf("movie: %d\n", scanner->next(scanner).title == 0);
-	printf("movie: %d\n", strcmp(scanner->next(scanner).title, "the pianist"));
-	printf("should be fail: %s\n", false ? "pass" : "fail");
 
-	char *query[] = { "title", "EQUALS", "the pianist" };
-	int query_size = 3;
-	printf("%s\n", query[1]);
+	PlanNode *node[] = { makeSelectNode(fn), makeScanNode() };
+	PlanNode *root = node[0];
+	root->child = node[1];
+	printf("should be fight club: %s\n", root->next(root)->title );
 
-
-	SelectNode *select_node = makeSelectNode(query, query_size); 
-	printf("select_node 1: %s\n", select_node->next(select_node).title );
-	printf("select_node 2: %s\n", select_node->next(select_node).title );
-
-	PlanNode node1[] = { 
-		
-		{ .fileScanNode = { makeScanNode() } }, 
-		{ .selectNode = { makeSelectNode(query, query_size) } }
-	};
-	printf("after: %s\n", node1[1].selectNode->next(node1[1].selectNode).title );
-	printf("after: %s\n", node1[1].selectNode->next(node1[1].selectNode).title );
-	printf("after: %s\n", node1[1].selectNode->next(node1[1].selectNode).title );
+	PlanNode *node2[] = { makeSelectNode(filterPredicate), makeScanNode() };
+	PlanNode *root2 = node2[0];
+	root2->child = node2[1];
+	printf("should be the pianist: %s\n", root2->next(root2)->title );
 
 } 
