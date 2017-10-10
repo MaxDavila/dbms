@@ -11,11 +11,12 @@ typedef struct record {
 	unsigned int id;
 	char *title;
 	char *genres;
+	double rating;
 } Record;
 
 Record movies[] = {
-	1, "fight club", "psychological thriller",
-	2, "the pianist", "drama"
+	1, "fight club", "psychological thriller", 4.5,
+	2, "the pianist", "drama", 5.0
 };
 
 // empty string vs NULL
@@ -29,6 +30,11 @@ typedef struct select_node_state {
 	bool (*filter)(Record*);
 } SelectNodeState;
 
+typedef struct project_node_state {
+	char **proj_fields;
+	int proj_field_count;
+} ProjectionNodeState;
+
 typedef struct PlanNode PlanNode;
 struct PlanNode {
 	Record *(*next)(void *self);
@@ -37,6 +43,7 @@ struct PlanNode {
 	union {
 		SelectNodeState *selectNodeState;
 		ScanNodeState *scanNodeState; 
+		ProjectionNodeState *projectNodeState;
 	};
 };
 
@@ -98,12 +105,61 @@ Record *selectNext(void *self) {
 	return NULL;
 }
 
+
+Record *projectNext(void *self);
+
+PlanNode *makeProjectNode(char *fields[], int field_count) {
+
+	PlanNode *node = malloc(sizeof(PlanNode));
+	if (node != NULL) {
+		node->next = &projectNext;
+		node->projectNodeState = malloc(sizeof(ProjectionNodeState));
+		node->projectNodeState->proj_fields = fields;
+		node->projectNodeState->proj_field_count = field_count;
+	}
+	return node;
+}
+
+
+// project(record, projection)
+Record *project(Record *source, char *proj_fields[], int field_count) {
+	// new record with filtered columns 
+	Record *projected = malloc(sizeof(Record));
+
+	for (int i = 0; i < field_count; i++) {
+		if (strcmp(proj_fields[i], "id") == 0) {
+			projected->id = source->id;
+		} else if (strcmp(proj_fields[i], "title") == 0) {
+			projected->title = source->title;
+		} else if (strcmp(proj_fields[i], "genres") == 0) {
+			projected->genres = source->genres;
+		} else if (strcmp(proj_fields[i], "rating") == 0) {
+			projected->rating = source->rating;
+		}
+	}
+	return projected;
+}
+
+
+Record *projectNext(void *self) {
+	PlanNode *project_node = self;
+	PlanNode *child_node = project_node->child;
+	ProjectionNodeState *project_node_state = project_node->projectNodeState;
+
+	Record *record = child_node->next(child_node);
+	if (record != NULL) {
+		printf("HIT\n");
+		record = project(record, project_node_state->proj_fields, project_node_state->proj_field_count);
+	}
+	return record;
+}
+
 bool filterPredicate(Record *source) {
 	return (strcmp(source->title, "the pianist") == 0) ? true : false;
 }
 
 bool fn(Record *source) {
-	return (strcmp(source->title, "fight club") == 0) ? true : false;
+	return (source->id == 1) ? true : false;
 }
 
 int main(void) {
@@ -119,9 +175,13 @@ int main(void) {
 	root->child = node[1];
 	printf("should be fight club: %s\n", root->next(root)->title );
 
-	PlanNode *node2[] = { makeSelectNode(filterPredicate), makeScanNode() };
+	char *proj_fields[] = { "rating" };
+	PlanNode *node2[] = { makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode() };
 	PlanNode *root2 = node2[0];
 	root2->child = node2[1];
-	printf("should be the pianist: %s\n", root2->next(root2)->title );
+	root2->child->child = node2[2];
+	// printf("should be 5.0: %f\n", root2->next(root2)->rating );
+	printf("should be null: %s\n", root2->next(root2)->title );
+
 
 } 
