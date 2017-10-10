@@ -107,7 +107,6 @@ Record *selectNext(void *self) {
 
 
 Record *projectNext(void *self);
-
 PlanNode *makeProjectNode(char *fields[], int field_count) {
 
 	PlanNode *node = malloc(sizeof(PlanNode));
@@ -121,7 +120,6 @@ PlanNode *makeProjectNode(char *fields[], int field_count) {
 }
 
 
-// project(record, projection)
 Record *project(Record *source, char *proj_fields[], int field_count) {
 	// new record with filtered columns 
 	Record *projected = malloc(sizeof(Record));
@@ -140,7 +138,6 @@ Record *project(Record *source, char *proj_fields[], int field_count) {
 	return projected;
 }
 
-
 Record *projectNext(void *self) {
 	PlanNode *project_node = self;
 	PlanNode *child_node = project_node->child;
@@ -153,6 +150,36 @@ Record *projectNext(void *self) {
 	}
 	return record;
 }
+
+
+
+
+Record *averageNext(void *self) {
+	PlanNode *avg_node = self;
+	PlanNode *child_node = avg_node->child;
+	Record *record;
+	unsigned int count = 0;
+	unsigned int sum = 0;
+
+	while ((record = child_node->next(child_node)) != NULL) {
+		count++;
+		sum += record->rating;
+	}
+
+	Record *newRecord = malloc(sizeof(Record));
+	newRecord->rating = sum / count;
+	return newRecord;
+}
+
+PlanNode *makeAverageNode() {
+
+	PlanNode *node = malloc(sizeof(PlanNode));
+	if (node != NULL) {
+		node->next = &averageNext;
+	}
+	return node;
+}
+
 
 bool filterPredicate(Record *source) {
 	return (strcmp(source->title, "the pianist") == 0) ? true : false;
@@ -176,12 +203,13 @@ int main(void) {
 	printf("should be fight club: %s\n", root->next(root)->title );
 
 	char *proj_fields[] = { "rating" };
-	PlanNode *node2[] = { makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode() };
+	PlanNode *node2[] = { makeAverageNode(), makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode() };
 	PlanNode *root2 = node2[0];
 	root2->child = node2[1];
 	root2->child->child = node2[2];
-	// printf("should be 5.0: %f\n", root2->next(root2)->rating );
-	printf("should be null: %s\n", root2->next(root2)->title );
+	root2->child->child->child = node2[3];
+	printf("should be 5.0: %f\n", root2->next(root2)->rating );
+	// printf("should be null: %s\n", root2->next(root2)->title );
 
 
 } 
