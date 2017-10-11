@@ -6,24 +6,42 @@
 
 typedef enum { false, true } bool;
 enum PlanNodeType { select_node_t, scan_node_t };
+enum RecordType { movie_t, rating_t };
 
 typedef struct record {
+    enum RecordType recordType;
+} Record;
+
+typedef struct movie {
+    Record record;
 	unsigned int id;
 	char *title;
 	char *genres;
 	double rating;
-} Record;
+} Movie;
 
-Record movies[] = {
-	1, "fight club", "psychological thriller", 4.5,
-	2, "the pianist", "drama", 5.0
+typedef struct rating {
+    Record record;
+    unsigned int user_id;
+    unsigned int movie_id;
+    double rating;
+} Rating;
+
+Movie movies[] = {
+        movie_t , 1, "fight club", "psychological thriller", 4.5,
+        movie_t , 2, "the pianist", "drama", 5.0,
+        movie_t , 3, "jumanji", "adventure", 3.5
 };
 
-// empty string vs NULL
-Record empty_record = { 1, "", ""};
+Rating ratings[] = {
+        rating_t, 1, 1, 4.5,
+        rating_t, 1, 2, 5.0,
+        rating_t, 1, 3, 3.5
+};
 
 typedef struct scan_node_state {
 	unsigned int current_record_idx;
+    enum RecordType recordType;
 } ScanNodeState;
 
 typedef struct select_node_state {
@@ -50,13 +68,14 @@ struct PlanNode {
 
 Record *scanNext(void *self);
 
-PlanNode *makeScanNode(void) {
+PlanNode *makeScanNode(enum RecordType recordType) {
 	PlanNode *node = malloc(sizeof(PlanNode));
 
 	if (node != NULL) {
 		node->next = &scanNext;
 		node->scanNodeState = malloc(sizeof(ScanNodeState));
 		node->scanNodeState->current_record_idx = 0;
+        node->scanNodeState->recordType = recordType;
 	}
 	return node;
 }
@@ -66,7 +85,7 @@ Record *scanNext(void *self) {
 	unsigned int current_record_idx = scan_node->scanNodeState->current_record_idx;
 
 	if (current_record_idx < RECORD_SIZE)
-		return &movies[scan_node->scanNodeState->current_record_idx++];
+		return (Record *) &movies[scan_node->scanNodeState->current_record_idx++];
 	else 
 		return NULL;
 }
@@ -119,23 +138,50 @@ PlanNode *makeProjectNode(char *fields[], int field_count) {
 	return node;
 }
 
+Movie *projectMovie(Movie *source, Movie *projection, char *proj_fields[], int field_count) {
+    for (int i = 0; i < field_count; i++) {
+        if (strcmp(proj_fields[i], "id") == 0) {
+            projection->id = source->id;
+        } else if (strcmp(proj_fields[i], "title") == 0) {
+            projection->title = source->title;
+        } else if (strcmp(proj_fields[i], "genres") == 0) {
+            projection->genres = source->genres;
+        } else if (strcmp(proj_fields[i], "rating") == 0) {
+            projection->rating = source->rating;
+        }
+    }
+    return projection;
+}
 
-Record *project(Record *source, char *proj_fields[], int field_count) {
+Rating *projectRating(Rating *source, Rating *projection, char *proj_fields[], int field_count) {
+    for (int i = 0; i < field_count; i++) {
+        if (strcmp(proj_fields[i], "user_id") == 0) {
+            projection->user_id = source->user_id;
+        } else if (strcmp(proj_fields[i], "movie_id") == 0) {
+            projection->movie_id = source->movie_id;
+        } else if (strcmp(proj_fields[i], "rating") == 0) {
+            projection->rating = source->rating;
+        }
+    }
+    return projection;
+}
+
+void *project(Record *src, char *proj_fields[], int field_count) {
 	// new record with filtered columns 
-	Record *projected = malloc(sizeof(Record));
-
-	for (int i = 0; i < field_count; i++) {
-		if (strcmp(proj_fields[i], "id") == 0) {
-			projected->id = source->id;
-		} else if (strcmp(proj_fields[i], "title") == 0) {
-			projected->title = source->title;
-		} else if (strcmp(proj_fields[i], "genres") == 0) {
-			projected->genres = source->genres;
-		} else if (strcmp(proj_fields[i], "rating") == 0) {
-			projected->rating = source->rating;
-		}
-	}
-	return projected;
+    switch (src->recordType) {
+        case movie_t: {
+            Movie *projection = malloc(sizeof(Movie));
+            Movie *source = (Movie *) src;
+            projectMovie(source, projection, proj_fields, field_count);
+            return projection;
+        }
+        case rating_t: {
+            Rating *projection = malloc(sizeof(Rating));
+            Rating *source = (Rating *) src;
+            projectRating(source, projection, proj_fields, field_count);
+            return projection;
+        }
+    }
 }
 
 Record *projectNext(void *self) {
@@ -145,7 +191,6 @@ Record *projectNext(void *self) {
 
 	Record *record = child_node->next(child_node);
 	if (record != NULL) {
-		printf("HIT\n");
 		record = project(record, project_node_state->proj_fields, project_node_state->proj_field_count);
 	}
 	return record;
@@ -163,12 +208,12 @@ Record *averageNext(void *self) {
 
 	while ((record = child_node->next(child_node)) != NULL) {
 		count++;
-		sum += record->rating;
+		sum += (( Movie *) record)->rating;
 	}
 
-	Record *newRecord = malloc(sizeof(Record));
+	Movie *newRecord = malloc(sizeof(Record));
 	newRecord->rating = sum / count;
-	return newRecord;
+	return (Record *) newRecord;
 }
 
 PlanNode *makeAverageNode() {
@@ -182,11 +227,15 @@ PlanNode *makeAverageNode() {
 
 
 bool filterPredicate(Record *source) {
-	return (strcmp(source->title, "the pianist") == 0) ? true : false;
+	return (strcmp(((Movie *) source)->title, "the pianist") == 0) ? true : false;
 }
 
 bool fn(Record *source) {
-	return (source->id == 1) ? true : false;
+	return (((Movie*) source)->id == 1) ? true : false;
+}
+
+bool fnRating(Record *source) {
+    return (((Rating*) source)->rating == 3.5) ? true : false;
 }
 
 int main(void) {
@@ -197,19 +246,23 @@ int main(void) {
 //   ["FILESCAN", ["ratings"]]
 // ]
 
-	PlanNode *node[] = { makeSelectNode(fn), makeScanNode() };
+    // makeScanNode(RecordType);
+	PlanNode *node[] = { makeSelectNode(fn), makeScanNode(movie_t) };
 	PlanNode *root = node[0];
 	root->child = node[1];
-	printf("should be fight club: %s\n", root->next(root)->title );
+	printf("should be fight club: %s\n", ((Movie *) root->next(root))->title );
 
-	char *proj_fields[] = { "rating" };
-	PlanNode *node2[] = { makeAverageNode(), makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode() };
-	PlanNode *root2 = node2[0];
-	root2->child = node2[1];
-	root2->child->child = node2[2];
-	root2->child->child->child = node2[3];
-	printf("should be 5.0: %f\n", root2->next(root2)->rating );
-	// printf("should be null: %s\n", root2->next(root2)->title );
+	 char *proj_fields[] = { "rating" };
+	 PlanNode *node2[] = { makeAverageNode(), makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode(movie_t) };
+	 PlanNode *root2 = node2[0];
+	 root2->child = node2[1];
+	 root2->child->child = node2[2];
+	 root2->child->child->child = node2[3];
+	 printf("should be 5.0: %f\n", ((Movie *) root2->next(root2))->rating );
+//	 printf("should be null: %s\n", ((Movie *) root2->next(root2))->title );
 
-
-} 
+    PlanNode *node3[] = { makeSelectNode(fnRating), makeScanNode(rating_t) };
+    PlanNode *root3 = node[0];
+    root3->child = node3[1];
+    printf("rating should be 3.5%1.f\n", ((Rating *) root->next(root3))->rating );
+}
