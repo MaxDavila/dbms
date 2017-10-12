@@ -14,10 +14,9 @@ typedef struct record {
 
 typedef struct movie {
     Record record;
-	unsigned int id;
-	char *title;
-	char *genres;
-	double rating;
+    unsigned int id;
+    char *title;
+    char *genres;
 } Movie;
 
 typedef struct rating {
@@ -27,10 +26,11 @@ typedef struct rating {
     double rating;
 } Rating;
 
+
 Movie movies[] = {
-        movie_t , 1, "fight club", "psychological thriller", 4.5,
-        movie_t , 2, "the pianist", "drama", 5.0,
-        movie_t , 3, "jumanji", "adventure", 3.5
+        movie_t , 1, "fight club", "psychological thriller",
+        movie_t , 2, "the pianist", "drama",
+        movie_t , 3, "jumanji", "adventure"
 };
 
 Rating ratings[] = {
@@ -39,103 +39,108 @@ Rating ratings[] = {
         rating_t, 1, 3, 3.5
 };
 
-typedef struct scan_node_state {
-	unsigned int current_record_idx;
-    enum RecordType recordType;
-} ScanNodeState;
-
-typedef struct select_node_state {
-	bool (*filter)(Record*);
-} SelectNodeState;
-
-typedef struct project_node_state {
-	char **proj_fields;
-	int proj_field_count;
-} ProjectionNodeState;
 
 typedef struct PlanNode PlanNode;
 struct PlanNode {
-	Record *(*next)(void *self);
-	PlanNode *child;
-	enum PlanNodeType nodeType;
-	union {
-		SelectNodeState *selectNodeState;
-		ScanNodeState *scanNodeState; 
-		ProjectionNodeState *projectNodeState;
-	};
-};
+    Record *(*next)(void *self);
+    PlanNode *child;
+    enum PlanNodeType nodeType;
+};      
 
+typedef struct scan_node {
+    PlanNode planNode;
+    unsigned int current_record_idx;
+    enum RecordType recordType;
+} ScanNode;
+
+typedef struct select_node {
+    PlanNode planNode;
+    bool (*filter)(Record*);
+} SelectNode;
+
+typedef struct project_node {
+    PlanNode planNode;
+    char **proj_fields;
+    int proj_field_count;
+} ProjectNode;
 
 Record *scanNext(void *self);
 
-PlanNode *makeScanNode(enum RecordType recordType) {
-	PlanNode *node = malloc(sizeof(PlanNode));
+ScanNode *makeScanNode(enum RecordType recordType) {
+    ScanNode *node = malloc(sizeof(ScanNode));
 
-	if (node != NULL) {
-		node->next = &scanNext;
-		node->scanNodeState = malloc(sizeof(ScanNodeState));
-		node->scanNodeState->current_record_idx = 0;
-        node->scanNodeState->recordType = recordType;
-	}
-	return node;
+    if (node != NULL) {
+        node->planNode.next = &scanNext;
+        node->current_record_idx = 0;
+        node->recordType = recordType;
+    }
+    return node;
 }
 
 Record *scanNext(void *self) {
-	PlanNode *scan_node = self;
-	unsigned int current_record_idx = scan_node->scanNodeState->current_record_idx;
-
-	if (current_record_idx < RECORD_SIZE)
-		return (Record *) &movies[scan_node->scanNodeState->current_record_idx++];
-	else 
-		return NULL;
+    ScanNode *scan_node = self;
+    unsigned int current_record_idx = scan_node->current_record_idx;
+    switch (scan_node->recordType) {
+        case movie_t: {
+            if (current_record_idx < RECORD_SIZE)
+                return (Record *) &movies[scan_node->current_record_idx++];
+            else 
+                return NULL;
+        }
+        case rating_t: {
+            if (current_record_idx < RECORD_SIZE)
+                return (Record *) &ratings[scan_node->current_record_idx++];
+            else 
+                return NULL;
+        } 
+    }
+    
 }
 
 // select node 
 Record *selectNext(void *self);
 
-PlanNode *makeSelectNode(bool (*predicate)(Record *)) {
+SelectNode *makeSelectNode(bool (*predicate)(Record *)) {
 
-	PlanNode *node = malloc(sizeof(PlanNode));
-	if (node != NULL) {
-		node->next = &selectNext;
-		node->selectNodeState = malloc(sizeof(SelectNodeState));
-		node->selectNodeState->filter = predicate;
-	}
-	return node;
+    SelectNode *node = malloc(sizeof(SelectNode));
+    if (node != NULL) {
+        node->planNode.next = &selectNext;
+        node->filter = predicate;
+    }
+    return node;
 }
 
 Record *selectNext(void *self) {
-	PlanNode *select_node = self;
-	PlanNode *child_node = select_node->child;
+    SelectNode *select_node = self;
+    PlanNode *child_node = ((PlanNode *) self) ->child;
 
-	for (;;) {
-		Record *current_record = child_node->next(child_node);
+    for (;;) {
+        Record *current_record = child_node->next(child_node);
+        if (current_record != NULL) {
+            if (select_node->filter(current_record)) {
+                return current_record;
+            }
+        } else {
+            return NULL;
+        }
 
-		if (current_record != NULL) {
-			if (select_node->selectNodeState->filter(current_record)) {
-				return current_record;
-			}
-		} else {
-			return NULL;
-		}
+    }
 
-	}
-
-	return NULL;
+    return NULL;
 }
 
 
 Record *projectNext(void *self);
-PlanNode *makeProjectNode(char *fields[], int field_count) {
+ProjectNode *makeProjectNode(char *fields[], int field_count) {
 
-	PlanNode *node = malloc(sizeof(PlanNode));
-	if (node != NULL) {
-		node->next = &projectNext;
-		node->projectNodeState = malloc(sizeof(ProjectionNodeState));
-		node->projectNodeState->proj_fields = fields;
-		node->projectNodeState->proj_field_count = field_count;
-	}
-	return node;
+    ProjectNode *node = malloc(sizeof(ProjectNode));
+
+    if (node != NULL) {
+        node->planNode.next = &projectNext;
+        node->proj_fields = fields;
+        node->proj_field_count = field_count;
+    }
+    return node;
 }
 
 Movie *projectMovie(Movie *source, Movie *projection, char *proj_fields[], int field_count) {
@@ -146,8 +151,6 @@ Movie *projectMovie(Movie *source, Movie *projection, char *proj_fields[], int f
             projection->title = source->title;
         } else if (strcmp(proj_fields[i], "genres") == 0) {
             projection->genres = source->genres;
-        } else if (strcmp(proj_fields[i], "rating") == 0) {
-            projection->rating = source->rating;
         }
     }
     return projection;
@@ -167,7 +170,7 @@ Rating *projectRating(Rating *source, Rating *projection, char *proj_fields[], i
 }
 
 void *project(Record *src, char *proj_fields[], int field_count) {
-	// new record with filtered columns 
+    // new record with filtered columns
     switch (src->recordType) {
         case movie_t: {
             Movie *projection = malloc(sizeof(Movie));
@@ -185,53 +188,52 @@ void *project(Record *src, char *proj_fields[], int field_count) {
 }
 
 Record *projectNext(void *self) {
-	PlanNode *project_node = self;
-	PlanNode *child_node = project_node->child;
-	ProjectionNodeState *project_node_state = project_node->projectNodeState;
+    PlanNode *plan_node = self;
+    PlanNode *child_node = plan_node->child;
+    ProjectNode *project_node = (ProjectNode *) self;
 
-	Record *record = child_node->next(child_node);
-	if (record != NULL) {
-		record = project(record, project_node_state->proj_fields, project_node_state->proj_field_count);
-	}
-	return record;
+    Record *record = child_node->next(child_node);
+    if (record != NULL) {
+        record = project(record, project_node->proj_fields, project_node->proj_field_count);
+    }
+    return record;
 }
 
-
-
-
 Record *averageNext(void *self) {
-	PlanNode *avg_node = self;
-	PlanNode *child_node = avg_node->child;
-	Record *record;
-	unsigned int count = 0;
-	unsigned int sum = 0;
+    PlanNode *avg_node = self;
+    PlanNode *child_node = avg_node->child;
+    Record *record;
+    unsigned int count = 0;
+    double sum = 0;
 
-	while ((record = child_node->next(child_node)) != NULL) {
-		count++;
-		sum += (( Movie *) record)->rating;
-	}
+    // TODO: derive type and field to average from record-> type
+    while ((record = child_node->next(child_node)) != NULL) {
+        count++;
+        sum += (( Rating *) record)->rating;
+    }
 
-	Movie *newRecord = malloc(sizeof(Record));
-	newRecord->rating = sum / count;
-	return (Record *) newRecord;
+    Rating *newRecord = malloc(sizeof(Record));
+    newRecord->rating = sum / count;
+    return (Record *) newRecord;
 }
 
 PlanNode *makeAverageNode() {
 
-	PlanNode *node = malloc(sizeof(PlanNode));
-	if (node != NULL) {
-		node->next = &averageNext;
-	}
-	return node;
+    PlanNode *node = malloc(sizeof(PlanNode));
+    if (node != NULL) {
+        node->next = &averageNext;
+    }
+    return node;
 }
+
 
 
 bool filterPredicate(Record *source) {
-	return (strcmp(((Movie *) source)->title, "the pianist") == 0) ? true : false;
+    return (strcmp(((Movie *) source)->title, "the pianist") == 0) ? true : false;
 }
 
 bool fn(Record *source) {
-	return (((Movie*) source)->id == 1) ? true : false;
+    return (((Movie*) source)->id == 1) ? true : false;
 }
 
 bool fnRating(Record *source) {
@@ -246,23 +248,31 @@ int main(void) {
 //   ["FILESCAN", ["ratings"]]
 // ]
 
-    // makeScanNode(RecordType);
-	PlanNode *node[] = { makeSelectNode(fn), makeScanNode(movie_t) };
-	PlanNode *root = node[0];
-	root->child = node[1];
-	printf("should be fight club: %s\n", ((Movie *) root->next(root))->title );
+    PlanNode *node[] = { (PlanNode *) makeSelectNode(fn), (PlanNode *) makeScanNode(movie_t) };
+    PlanNode *root = node[0];
+    root->child = node[1];
+    printf("should be fight club: %s\n", ((Movie *) root->next(root))->title );
 
-	 char *proj_fields[] = { "rating" };
-	 PlanNode *node2[] = { makeAverageNode(), makeProjectNode(proj_fields, 1), makeSelectNode(filterPredicate), makeScanNode(movie_t) };
-	 PlanNode *root2 = node2[0];
-	 root2->child = node2[1];
-	 root2->child->child = node2[2];
-	 root2->child->child->child = node2[3];
-	 printf("should be 5.0: %f\n", ((Movie *) root2->next(root2))->rating );
-//	 printf("should be null: %s\n", ((Movie *) root2->next(root2))->title );
+    char *proj_fields[] = { "title" };
+    PlanNode *node2[] = { (PlanNode *) makeProjectNode(proj_fields, 1), (PlanNode *) makeSelectNode(filterPredicate),
+        (PlanNode *) makeScanNode(movie_t) };
+    PlanNode *root2 = node2[0];
+    root2->child = node2[1];
+    root2->child->child = node2[2];
+    printf("should be the pianist: %s\n", ((Movie *) root2->next(root2))->title );
 
-    PlanNode *node3[] = { makeSelectNode(fnRating), makeScanNode(rating_t) };
-    PlanNode *root3 = node[0];
+    char *proj_fields3[] = { "rating" };
+    PlanNode *node3[] = { (PlanNode *) makeAverageNode(), (PlanNode *) makeProjectNode(proj_fields3, 1),
+     (PlanNode *) makeSelectNode(fnRating), (PlanNode *) makeScanNode(rating_t) };
+    PlanNode *root3 = node3[0];
     root3->child = node3[1];
-    printf("rating should be 3.5%1.f\n", ((Rating *) root->next(root3))->rating );
+    root3->child->child = node3[2];
+    root3->child->child->child = node3[3];
+    printf("should be 3.5: %f\n", ((Rating *) root3->next(root3))->rating );
+
+    // PlanNode *node3[] = { (PlanNode *) makeSelectNode(fnRating), (PlanNode *) makeScanNode(rating_t) };
+    // PlanNode *root3 = node3[0];
+    // root3->child = node3[1];
+    // printf("rating should be 3.5 %f\n", ((Rating *) root3->next(root3))->rating );
+
 }
