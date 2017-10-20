@@ -33,35 +33,38 @@ void parse_line(char *line, ssize_t line_length, char *output[]) {
     }
 }
 
+
+
 int main(void) {
-    FILE *fp;
+    FILE *csv_fp;
     char *buffer = NULL;
     size_t buffer_len = 0;
     ssize_t line_length;
 
-    fp = fopen("movielens/movies.csv", "r");
-    if (fp == NULL)
+    csv_fp = fopen("data/movielens/movies.csv", "r");
+    if (csv_fp == NULL)
         exit(EXIT_FAILURE);
 
-    getline(&buffer, &buffer_len, fp); // read headers
+    getline(&buffer, &buffer_len, csv_fp); // read headers
 
     char *output[3];
-    while ((line_length = getline(&buffer, &buffer_len, fp)) != -1) {
-        printf("Retrieved line of length %zu :\n", line_length);
-        printf("%s\n", buffer);
+    while ((line_length = getline(&buffer, &buffer_len, csv_fp)) != -1) {
         parse_line(buffer, line_length, output);
+
+        printf("OUTPUT %s\n", output[0]);
+        printf("OUTPUT2 %s\n", output[1]);
+        printf("OUTPUT3 %s\n", output[2]);
+
     }
 
 
-    printf("OUTPUT %s\n", output[0]);
-    printf("OUTPUT2 %s\n", output[1]);
-    printf("OUTPUT3 %s\n", output[2]);
-
-    fclose(fp);
+    fclose(csv_fp);
     if (buffer)
         free(buffer);
     exit(EXIT_SUCCESS);
 }
+
+
 // read movie lens csv into heapfile
 // open csv
 // skip row 1
