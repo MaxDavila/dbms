@@ -3,42 +3,6 @@
 #include <string.h>
 #include "serializer.h" 
 
-void parse_row(char *line, ssize_t line_length, char *output[]) {
-    char *new_string;
-    int in = 0;
-    int needle = 0;
-    int start = 0;
-    int output_i = 0;
-
-    while (needle < line_length) {
-
-        if ((line[needle] == ',' || line[needle] == '\n') && !in) {
-            // allocate and copy string up until needle
-
-            size_t new_size = needle - start;
-            new_string = malloc(new_size);
-            memcpy(new_string, line + start, new_size);
-
-            // strip out last char if it's a quotation mark
-            if (new_string[new_size - 1] == '\"')
-                new_string[new_size - 1] = '\0';
-
-            output[output_i] = malloc(new_size);
-            output[output_i] = new_string;
-
-            start = needle + 1;
-            output_i++;
-        } else if (line[needle] == '\"' && !in) {
-            in = 1;
-            start++;
-
-        } else if (line[needle] == '\"' && in) {
-            in = 0;
-        }
-        needle++;
-    }
-}
-
 #define BLOCK_SIZE 4096
 
 typedef enum { mdb_unsigned_int, mdb_unsigned_char, mdb_double } dbType;
@@ -75,6 +39,71 @@ void print_hex_memory(void *mem) {
   printf("\n");
 }
 
+void parse_row(char *line, ssize_t line_length, char *output[]) {
+    char *new_string;
+    int in = 0;
+    int needle = 0;
+    int start = 0;
+    int output_i = 0;
+
+    while (needle < line_length) {
+
+        if ((line[needle] == ',' || line[needle] == '\n') && !in) {
+            // allocate and copy string up until needle
+
+            size_t new_size = needle - start;
+            new_string = malloc(new_size);
+            memcpy(new_string, line + start, new_size);
+
+            // strip out last char if it's a quotation mark
+            if (new_string[new_size - 1] == '\"')
+                new_string[new_size - 1] = '\0';
+
+            output[output_i] = malloc(new_size);
+            output[output_i] = new_string;
+
+            start = needle + 1;
+            output_i++;
+        } else if (line[needle] == '\"' && !in) {
+            in = 1;
+            start++;
+
+        } else if (line[needle] == '\"' && in) {
+            in = 0;
+        }
+        needle++;
+    }
+}
+void serialize_row(Schema schema, Buffer *buffer, char *row[]) {
+    for (int i = 0; i < schema.field_count; i++) {
+
+        switch (schema.types[i]->type) {
+            case (mdb_unsigned_int): {
+
+                serialize_int(atoi(row[i]), buffer);
+                break;
+            }
+            case (mdb_unsigned_char): {
+                // need to zero out and properly size the char array before serializing
+                // TODO: size should not be hardcoded
+
+                // skipping rows longer than predetermined schema length
+                if (strlen(row[i]) >= my_char.size)
+                    return;
+
+                char temp[100] = {0};
+                strcpy(temp, row[i]);
+                serialize_char_array(temp, my_char.size, buffer);
+
+                break;
+            }
+            case (mdb_double): {
+                break;
+            }
+        }
+    }
+} 
+
 int main(void) {
 
     FILE *csv_fp;
@@ -84,7 +113,7 @@ int main(void) {
     size_t buffer_len = 0;
     ssize_t line_length;
 
-    csv_fp = fopen("data/movielens/movies_small.csv", "r");
+    csv_fp = fopen("data/movielens/movies.csv", "r");
     heap_fp = fopen("data/movies.table", "wb+");
     if (csv_fp == NULL)
         exit(EXIT_FAILURE);
@@ -95,31 +124,9 @@ int main(void) {
         char *parsed_row[3];
 
         parse_row(buffer, line_length, parsed_row);
-        // serialize_row
+
         Buffer *serialization_buffer = new_buffer_of_size(movie_schema.size);
-
-        for (int i = 0; i < movie_schema.field_count; i++) {
-
-            switch (movie_schema.types[i]->type) {
-                case (mdb_unsigned_int): {
-
-                    serialize_int(atoi(parsed_row[i]), serialization_buffer);
-                    break;
-                }
-                case (mdb_unsigned_char): {
-                    // need to zero out and properly size the char array before serializing
-                    // TODO: size should not be hardcoded
-                    char temp[100] = {0};
-                    strcpy(temp, parsed_row[i]);
-                    serialize_char_array(temp, my_char.size, serialization_buffer);
-                    break;
-                }
-                case (mdb_double): {
-                    break;
-                }
-            }
-        }
-
+        serialize_row(movie_schema, serialization_buffer, parsed_row);
 
         // write to heap file
 

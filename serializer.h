@@ -22,6 +22,7 @@ Buffer *new_buffer_of_size(int size);
 void serialize_int(int x, Buffer *b);
 void serialize_double(double x, Buffer *b);
 void serialize_char_array(char *src, int size, Buffer *b);
+// void serialize_row(Schema schema, Buffer *buffer, char *row[]);
 
 void deserialize_int(Buffer *src, struct Element *dst);
 void deserialize_into_int(char *src, int offset, int *dst);
