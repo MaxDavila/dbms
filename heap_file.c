@@ -24,6 +24,11 @@ typedef struct schema {
     DbType **types;
 } Schema;
 
+typedef struct tuple_id {
+    unsigned int block_idx;
+    unsigned int offset;
+} TupleId;
+
 char *movie_fields[] = { "id", "title", "genres" };
 DbType *movie_types[] = { &my_unsigned_int, &my_char, &my_char };
 Schema movie_schema = { "movies",  movie_fields, 3, 204, movie_types };
@@ -104,139 +109,122 @@ void serialize_row(Schema schema, Buffer *buffer, char *row[]) {
     }
 } 
 
+void heap_write(FILE *heap_fp, Buffer *serialization_buffer) {
+
+    // if file is empty, write first block
+    fseek(heap_fp, 0, SEEK_END);
+    if (ftell(heap_fp) == 0) {
+        Buffer *temp_buffer = new_buffer();
+        serialize_int(0, temp_buffer);
+        serialize_int(8, temp_buffer);
+
+        fwrite(temp_buffer->data, 1, 8, heap_fp);
+
+        // zero out the rest of the block 
+        char empty[BLOCK_SIZE - 8] = {0};
+        fwrite(empty, 1, BLOCK_SIZE - 8, heap_fp);
+        free(temp_buffer);
+    }
+
+    // read first 8 bytes from the first block
+    char first_bytes[8];
+    fseek(heap_fp, 0, SEEK_SET);
+    fread(first_bytes, 8, 1, heap_fp);        
+    
+    // get the block idx and offset of next available place to write
+    int block_idx = 0;
+    int tuple_offset = 0;
+    deserialize_into_int(first_bytes, 0, &block_idx);
+    deserialize_into_int(first_bytes, 4, &tuple_offset);
+
+    // if we don't have space for the record, move to the next block
+    if (serialization_buffer->offset > (BLOCK_SIZE - tuple_offset)) {
+       block_idx++;
+       tuple_offset = 0;
+
+       // zero out the first 8 bytes of the next block
+       fseek(heap_fp, block_idx * BLOCK_SIZE, SEEK_SET);  
+       char empty[BLOCK_SIZE - 8] = {0};
+       fwrite(empty, 1, BLOCK_SIZE - 8, heap_fp);
+    }
+
+    // write the record itself
+    // TODO: handle case when buffer < schema.size
+    fseek(heap_fp, block_idx * BLOCK_SIZE + tuple_offset, SEEK_SET);  
+    fwrite(serialization_buffer->data, 1, movie_schema.size, heap_fp);
+
+    // update block header to point to next available record
+    tuple_offset += movie_schema.size;
+    
+    Buffer *temp_buffer = new_buffer();
+    serialize_int(block_idx, temp_buffer);
+    serialize_int(tuple_offset, temp_buffer);
+    fseek(heap_fp, 0, SEEK_SET);
+    fwrite(temp_buffer->data, 1, 8, heap_fp);
+    free(temp_buffer);
+}
+
+void heap_read(struct Element *tuple, FILE *heap_fp, TupleId tuple_id, Schema schema) {
+    Buffer *buffer = new_buffer_of_size(BLOCK_SIZE);
+    int offset = tuple_id.block_idx * BLOCK_SIZE + tuple_id.offset;
+    fseek(heap_fp, offset, SEEK_SET);
+    // TODO need to derive record size from schema
+    fread(buffer->data, schema.size, 1, heap_fp);
+    
+    deserialize_int(buffer, &tuple[0]);
+    deserialize_char_array(buffer, &tuple[1], my_char.size);
+    deserialize_char_array(buffer, &tuple[2], my_char.size);
+
+    printf("TUPLE DATA %d, %s, %s\n",  tuple[0].i, tuple[1].str, tuple[2].str);
+}
+
 int main(void) {
 
     FILE *csv_fp;
     FILE *heap_fp;
 
-    char *buffer = NULL;
+    char *read_buffer = NULL;
     size_t buffer_len = 0;
     ssize_t line_length;
 
-    csv_fp = fopen("data/movielens/movies.csv", "r");
+    csv_fp = fopen("data/movielens/movies_small.csv", "r");
     heap_fp = fopen("data/movies.table", "wb+");
     if (csv_fp == NULL)
         exit(EXIT_FAILURE);
 
-    getline(&buffer, &buffer_len, csv_fp); // skip headers
+    getline(&read_buffer, &buffer_len, csv_fp); // skip headers
 
-    while ((line_length = getline(&buffer, &buffer_len, csv_fp)) != -1) {
+    while ((line_length = getline(&read_buffer, &buffer_len, csv_fp)) != -1) {
         char *parsed_row[3];
-
-        parse_row(buffer, line_length, parsed_row);
+        parse_row(read_buffer, line_length, parsed_row);
 
         Buffer *serialization_buffer = new_buffer_of_size(movie_schema.size);
         serialize_row(movie_schema, serialization_buffer, parsed_row);
-
-        // write to heap file
-
-        // if file is empty, write first block
-        fseek(heap_fp, 0, SEEK_END);
-        if (ftell(heap_fp) == 0) {
-            Buffer *temp_buffer = new_buffer();
-            serialize_int(0, temp_buffer);
-            serialize_int(8, temp_buffer);
-
-            fwrite(temp_buffer->data, 1, 8, heap_fp);
-
-            // zero out the rest of the block 
-            char empty[BLOCK_SIZE - 8] = {0};
-            fwrite(empty, 1, BLOCK_SIZE - 8, heap_fp);
-            free(temp_buffer);
-        }
-
-        // read first 8 bytes from the first block
-        char first_bytes[8];
-        fseek(heap_fp, 0, SEEK_SET);
-        fread(first_bytes, 8, 1, heap_fp);        
         
-        // get the block idx and offset of next available place to write
-        int block_idx = 0;
-        int tuple_offset = 0;
-        deserialize_into_int(first_bytes, 0, &block_idx);
-        deserialize_into_int(first_bytes, 4, &tuple_offset);
+        heap_write(heap_fp, serialization_buffer);
+        free(serialization_buffer);
 
-        // // read the block into a buffer
-        // Buffer *block_buffer = new_buffer_of_size(BLOCK_SIZE);
-        // fseek(heap_fp, block_idx * BLOCK_SIZE + tuple_offset, SEEK_SET);
-        // fread(block_buffer->data, BLOCK_SIZE - 8, 1, heap_fp);
-
-        // if we don't have space for the record, move to the next block
-        if (serialization_buffer->offset > (BLOCK_SIZE - tuple_offset)) {
-           block_idx++;
-           tuple_offset = 0;
-
-           // zero out the first 8 bytes of the next block
-           fseek(heap_fp, block_idx * BLOCK_SIZE, SEEK_SET);  
-           char empty[BLOCK_SIZE - 8] = {0};
-           fwrite(empty, 1, BLOCK_SIZE - 8, heap_fp);
-        }
-
-        // struct Element *arr = malloc(sizeof(struct Element) * 3);
-        // serialization_buffer->offset = 0;
-
-        // deserialize_int(serialization_buffer, &arr[0]);
-        // arr[1].str = malloc(100);
-        // arr[2].str = malloc(100);
-
-        // deserialize_char_array(serialization_buffer, &arr[1], 100);
-        // deserialize_char_array(serialization_buffer, &arr[2], 100);
-
-        // printf("serialization_buffer data %s what\n",  arr[1].str);
-        // printf("serialization_buffer data %s what\n",  arr[2].str);
-
-        // write the record itself
-        // TODO: handle case when buffer < schema.size
-        fseek(heap_fp, block_idx * BLOCK_SIZE + tuple_offset, SEEK_SET);  
-        fwrite(serialization_buffer->data, 1, movie_schema.size, heap_fp);
-
-        // update block header to point to next available record
-        tuple_offset += movie_schema.size;
-        
-        Buffer *temp_buffer = new_buffer();
-        serialize_int(block_idx, temp_buffer);
-        serialize_int(tuple_offset, temp_buffer);
-        fseek(heap_fp, 0, SEEK_SET);
-        fwrite(temp_buffer->data, 1, 8, heap_fp);
-        free(temp_buffer);
-
-        // get next free block id
-        /*
-                
-        fwrite(buffer, length);
-        1) when file is empty
-            - write block header (next_free_block(4), next_free_offset(4))
-        2) when file is not empty
-            - read first 4 bytes
-            - read the next 4 bytes
-            - resolve address
-            - fseek to address
-            - if record_size > block_size - offset  
-                - block_i ++
-                - offset = 0;
-                - write 8 first null bytes of next block
-            - fwrite record
-            - update block header to point to next available record
-                - update next free block, 
-                - update offset
-                - return both 
-        */
-
-
-        // free buffer
 
         printf("OUTPUT %s\n", parsed_row[0]);
         printf("OUTPUT2 %s\n", parsed_row[1]);
         printf("OUTPUT3 %s\n", parsed_row[2]);
-
     }
+
+    TupleId tuple_id = {0, 212};
+    struct Element *arr = malloc(sizeof(struct Element) * movie_schema.field_count);
+    for (int i = 0; i < movie_schema.field_count; i++) {
+        if (movie_schema.types[i]->type == mdb_unsigned_char) {
+            arr[i].str = malloc(my_char.size);
+        }
+    }
+    heap_read(arr, heap_fp, tuple_id, movie_schema);
 
 
     fclose(csv_fp);
     fclose(heap_fp);
 
-    if (buffer)
-        free(buffer);
+    if (read_buffer)
+        free(read_buffer);
     exit(EXIT_SUCCESS);
 }
 
