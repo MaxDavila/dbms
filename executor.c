@@ -128,10 +128,23 @@ bool fn(Tuple *source) {
     Buffer *buffer = new_buffer_of_size(my_char.size);
     serialize_char_array(query, my_char.size, buffer);
 
-    char tuple_title[my_char.size];
-    memcpy(tuple_title, source->buffer->data + 4, my_char.size);
-    return memcmp(buffer->data, tuple_title, my_char.size) == 0 ? true : false;
+    char tuple_field[my_char.size];
+    memcpy(tuple_field, source->buffer->data + 4, my_char.size);
+    return memcmp(buffer->data, tuple_field, my_char.size) == 0 ? true : false;
 }
+
+bool fn2(Tuple *source) {
+    int query = 10;
+    char field[] = "id";
+
+    Buffer *buffer = new_buffer_of_size(my_unsigned_int.size);
+    serialize_int(query, buffer);
+
+    char tuple_field[my_unsigned_int.size];
+    memcpy(tuple_field, source->buffer->data, my_unsigned_int.size);
+    return memcmp(buffer->data, tuple_field, my_unsigned_int.size) == 0 ? true : false;
+}
+
 
 int main(void) {
 
@@ -145,7 +158,7 @@ int main(void) {
     print_hex_memory(root->next(root)->buffer->data);
 
     printf("------------------\n");
-    PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
+    PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
     PlanNode *root2 = node2[0];
     root2->left_tree = node2[1];
     print_hex_memory(root2->next(root2)->buffer->data);
@@ -153,15 +166,15 @@ int main(void) {
 
     // predicate tests
     // Tuple *source = root->next(root);
-    char query[100] = "Money Train (1995)";
+    // char query[100] = "Money Train (1995)";
     // char field[] = "title";
     // // get char length from schema. Pass field to select node (schema, title)
-    Buffer *query_buffer = new_buffer_of_size(100);
-    serialize_char_array(query, my_char.size, query_buffer);
+    // Buffer *query_buffer = new_buffer_of_size(100);
+    // serialize_char_array(query, my_char.size, query_buffer);
 
     // char tuple_title[100];
     // memcpy(tuple_title, source->buffer->data + 4, 100);
-    print_hex_memory(query_buffer->data);
+    // print_hex_memory(query_buffer->data);
     // printf("result %s\n", memcmp(query_buffer->data, tuple_title, 100) == 0 ? "true" : "false");
     // print_hex_memory(tuple_title);
 
