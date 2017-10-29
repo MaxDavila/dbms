@@ -3,31 +3,9 @@
 #include <string.h>
 #include "serializer.h" 
 
-#define BLOCK_SIZE 4096
-
-typedef enum { mdb_unsigned_int, mdb_unsigned_char, mdb_double } dbType;
-
-typedef struct db_type {
-    dbType type;
-    int size;
-} DbType;
-
 DbType my_unsigned_int = { mdb_unsigned_int, 4 };
 DbType my_char = { mdb_unsigned_char, 100 };
 DbType my_double = { mdb_double, 8 };
-
-typedef struct schema {
-    char *table_name;
-    char **fields;
-    int field_count;
-    int size;
-    DbType **types;
-} Schema;
-
-typedef struct tuple_id {
-    unsigned int block_idx;
-    unsigned int offset;
-} TupleId;
 
 char *movie_fields[] = { "id", "title", "genres" };
 DbType *movie_types[] = { &my_unsigned_int, &my_char, &my_char };
@@ -36,7 +14,7 @@ Schema movie_schema = { "movies",  movie_fields, 3, 204, movie_types };
 void print_hex_memory(void *mem) {
   int i;
   unsigned char *p = (unsigned char *)mem;
-  for (i=0;i<128;i++) {
+  for (i=0;i<256;i++) {
     printf("0x%02x ", p[i]);
     if ((i%16==0) && i)
       printf("\n");
@@ -138,23 +116,23 @@ void heap_write(FILE *heap_fp, Buffer *serialization_buffer) {
     deserialize_into_int(first_bytes, 4, &tuple_offset);
 
     // if we don't have space for the record, move to the next block
-    if (serialization_buffer->offset > (BLOCK_SIZE - tuple_offset)) {
+    if (serialization_buffer->size > (BLOCK_SIZE - tuple_offset)) {
        block_idx++;
        tuple_offset = 0;
 
        // zero out the first 8 bytes of the next block
        fseek(heap_fp, block_idx * BLOCK_SIZE, SEEK_SET);  
-       char empty[BLOCK_SIZE - 8] = {0};
-       fwrite(empty, 1, BLOCK_SIZE - 8, heap_fp);
+       char empty[8] = {0};
+       fwrite(empty, 1, 8, heap_fp);
+       tuple_offset+= 8;
     }
 
     // write the record itself
     // TODO: handle case when buffer < schema.size
     fseek(heap_fp, block_idx * BLOCK_SIZE + tuple_offset, SEEK_SET);  
-    fwrite(serialization_buffer->data, 1, movie_schema.size, heap_fp);
-
+    fwrite(serialization_buffer->data, 1, serialization_buffer->size, heap_fp);
     // update block header to point to next available record
-    tuple_offset += movie_schema.size;
+    tuple_offset += serialization_buffer->size;
     
     Buffer *temp_buffer = new_buffer();
     serialize_int(block_idx, temp_buffer);
@@ -168,7 +146,6 @@ void heap_read(struct Element *tuple, FILE *heap_fp, TupleId tuple_id, Schema sc
     Buffer *buffer = new_buffer_of_size(BLOCK_SIZE);
     int offset = tuple_id.block_idx * BLOCK_SIZE + tuple_id.offset;
     fseek(heap_fp, offset, SEEK_SET);
-    // TODO need to derive record size from schema
     fread(buffer->data, schema.size, 1, heap_fp);
     
     deserialize_int(buffer, &tuple[0]);
@@ -178,101 +155,68 @@ void heap_read(struct Element *tuple, FILE *heap_fp, TupleId tuple_id, Schema sc
     printf("TUPLE DATA %d, %s, %s\n",  tuple[0].i, tuple[1].str, tuple[2].str);
 }
 
-int main(void) {
 
-    FILE *csv_fp;
-    FILE *heap_fp;
+void heap_read_raw_tuple(Tuple tuple, FILE *heap_fp) {
+    TupleId tuple_id = tuple.tuple_id;
 
-    char *read_buffer = NULL;
-    size_t buffer_len = 0;
-    ssize_t line_length;
-
-    csv_fp = fopen("data/movielens/movies_small.csv", "r");
-    heap_fp = fopen("data/movies.table", "wb+");
-    if (csv_fp == NULL)
-        exit(EXIT_FAILURE);
-
-    getline(&read_buffer, &buffer_len, csv_fp); // skip headers
-
-    while ((line_length = getline(&read_buffer, &buffer_len, csv_fp)) != -1) {
-        char *parsed_row[3];
-        parse_row(read_buffer, line_length, parsed_row);
-
-        Buffer *serialization_buffer = new_buffer_of_size(movie_schema.size);
-        serialize_row(movie_schema, serialization_buffer, parsed_row);
-        
-        heap_write(heap_fp, serialization_buffer);
-        free(serialization_buffer);
-
-
-        printf("OUTPUT %s\n", parsed_row[0]);
-        printf("OUTPUT2 %s\n", parsed_row[1]);
-        printf("OUTPUT3 %s\n", parsed_row[2]);
-    }
-
-    TupleId tuple_id = {0, 212};
-    struct Element *arr = malloc(sizeof(struct Element) * movie_schema.field_count);
-    for (int i = 0; i < movie_schema.field_count; i++) {
-        if (movie_schema.types[i]->type == mdb_unsigned_char) {
-            arr[i].str = malloc(my_char.size);
-        }
-    }
-    heap_read(arr, heap_fp, tuple_id, movie_schema);
-
-
-    fclose(csv_fp);
-    fclose(heap_fp);
-
-    if (read_buffer)
-        free(read_buffer);
-    exit(EXIT_SUCCESS);
+    int offset = tuple_id.block_idx * BLOCK_SIZE + tuple_id.offset;
+    fseek(heap_fp, offset, SEEK_SET);
+    fread(tuple.buffer->data, tuple.schema.size, 1, heap_fp);
 }
 
-/*
-    tuple desc = type, length
-    schema = new schema ('table_name', [id, title, genre], [mdb_unsigned_int, mdb_unsigned_char(100), mdb_unsigned_char(100)])
-    row = [1, pianist, sad];
-    serialize(row, schema, buffer);
-     for field in schema.fields:
-        // this or mdb_unsigned_int.serialize(to get rid of branches )
-        switch(type) {
-            case(mdb_unsigned_int):
-                serialize_int(row[i], buffer);
-                break;
-                ..
-        }
-    fwrite(buffer, length)
-
-    block = new Block(fread(block, length)); 
-    bytes = get_tuple(block, BLOCK_LENGTH);
-    tuple = new Tuple(bytes, schema);
-    tuple = join(tupleA, tupleB); work on tuples
-    Result *result_arr = generic struct
-    deserialize(tuple.get_bytes(), schema, result_arr)
-        for field, i in schema.fields
-            switch(type) {
-                case(mdb_unsigned_int):
-                    result_arr[i].type = mdb_unsigned_int;
-                    deserialize_int(src_buffer, result_arr[i]);
-                    break;
-                    ..
-            }
-    new Record(buffer);
-*/
 
 
+// int main(void) {
 
-// read movie lens csv into heapfile
-// open csv
-// skip row 1
-// for each row
-  // serialize
-  // find next available record_id (block_id, offset)
-    // read first 4 bytes of header 
-    // read next 4 bytes to determine offset
-    
-  // write record
-  // update next available record_id
-  // return record_id
+//     FILE *csv_fp;
+//     FILE *heap_fp;
 
-// schema that can serialize / deserialize
+//     char *read_buffer = NULL;
+//     size_t buffer_len = 0;
+//     ssize_t line_length;
+
+//     csv_fp = fopen("data/movielens/movies_small.csv", "r");
+//     heap_fp = fopen("data/movies.table", "wb+");
+//     if (csv_fp == NULL)
+//         exit(EXIT_FAILURE);
+
+//     getline(&read_buffer, &buffer_len, csv_fp); // skip headers
+
+//     while ((line_length = getline(&read_buffer, &buffer_len, csv_fp)) != -1) {
+//         char *parsed_row[3];
+//         parse_row(read_buffer, line_length, parsed_row);
+
+//         Buffer *serialization_buffer = new_buffer_of_size(movie_schema.size);
+//         serialize_row(movie_schema, serialization_buffer, parsed_row);
+//         heap_write(heap_fp, serialization_buffer);
+//         free(serialization_buffer);
+
+
+//         printf("OUTPUT %s\n", parsed_row[0]);
+//         printf("OUTPUT2 %s\n", parsed_row[1]);
+//         printf("OUTPUT3 %s\n", parsed_row[2]);
+//     }
+
+//     // attempt to read a record given a block id and offset
+//     TupleId tuple_id = {0, 8};
+//     struct Element *arr = malloc(sizeof(struct Element) * movie_schema.field_count);
+//     for (int i = 0; i < movie_schema.field_count; i++) {
+//         if (movie_schema.types[i]->type == mdb_unsigned_char) {
+//             arr[i].str = malloc(my_char.size);
+//         }
+//     }
+//     heap_read(arr, heap_fp, tuple_id, movie_schema);
+
+//     // test read raw tuple
+//     Buffer *buffer = new_buffer_of_size(movie_schema.size);
+//     Tuple tuple = { tuple_id, movie_schema, buffer };
+//     heap_read_raw_tuple(tuple, heap_fp);
+//     print_hex_memory(tuple.buffer->data);
+
+//     fclose(csv_fp);
+//     fclose(heap_fp);
+
+//     if (read_buffer)
+//         free(read_buffer);
+//     exit(EXIT_SUCCESS);
+// }

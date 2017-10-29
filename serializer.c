@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "serializer.h"
+#include <serializer.h>
 
 Buffer *new_buffer() {
     Buffer *b = malloc(sizeof(Buffer));
-    b->data = malloc(INITIAL_SIZE);
-    b->size = INITIAL_SIZE;
+    b->data = malloc(DEFAULT_BUFFER_SIZE);
+    b->size = DEFAULT_BUFFER_SIZE;
     b->offset = 0;
 
     return b;
@@ -67,33 +67,3 @@ void deserialize_char_array(Buffer *src, struct Element *dst, int size) {
     memcpy(dst->str, ((char *) src->data) + src->offset, size);
     src->offset += size;
 }
-
-    
-// int main(void) {
-//     struct Element *arr = malloc(sizeof(struct Element) * 3);
-
-//     char *string = { "hello"};
-//     Buffer *src = new_buffer();
-
-//     serialize_int(2147483640, src);
-//     serialize_char_array(string, 200, src);
-//     serialize_double(4.9, src);
-
-//     src->offset = 0;    
-//     deserialize_int(src, &arr[0]);
-//     arr[1].str = malloc(200);
-//     deserialize_char_array(src, &arr[1], 200);
-//     deserialize_double(src, &arr[2]);
-
-//     char *address = src->data;
-
-//     printf("address %x\n", address[8]); 
-
-//     printf("deserialized int %d\n", arr[0].i);
-//     printf("deserialized char %s\n",arr[1].str); 
-//     printf("deserialized double %1.1f\n",arr[2].d); 
-
-//     printf("size %zu\n", src->size);
-//     printf("src offset %u\n", src->offset); 
-
-// }
