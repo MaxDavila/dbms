@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define DEFAULT_BUFFER_SIZE 32
 #define BLOCK_SIZE 4096

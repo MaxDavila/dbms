@@ -3,11 +3,6 @@
 
 typedef enum { false, true } bool;
 enum PlanNodeType { select_node_t, scan_node_t };
-enum RecordType { movie_t, rating_t };
-
-typedef struct record {
-    enum RecordType table_name;
-} Record;
 
 typedef struct PlanNode PlanNode;
 struct PlanNode {
@@ -25,19 +20,10 @@ typedef struct scan_node {
     Schema schema;
 } ScanNode;
 
-Tuple *scanNext(void *self);
-
-ScanNode *makeScanNode(char table_name[], Schema schema) {
-    ScanNode *node = malloc(sizeof(ScanNode));
-
-    if (node != NULL) {
-        node->plan_node.next = &scanNext;
-        node->table_name = table_name;
-        node->schema = schema;
-        node->current_tuple_id = NULL;
-    }
-    return node;
-}
+typedef struct select_node {
+    PlanNode plan_node;
+    bool (*filter)(Tuple*);
+} SelectNode;
 
 
 Tuple *scanNext(void *self) {
@@ -84,13 +70,68 @@ Tuple *scanNext(void *self) {
         tuple->buffer = buffer;
 
         heap_read_raw_tuple(*tuple, heap_fp);
-        printf("block idx %d, offset %d\n", node->current_tuple_id->block_idx, node->current_tuple_id->offset);
         return tuple;
     }
   
     fclose(heap_fp);
 }
 
+ScanNode *makeScanNode(char table_name[], Schema schema) {
+    ScanNode *node = malloc(sizeof(ScanNode));
+
+    if (node != NULL) {
+        node->plan_node.next = &scanNext;
+        node->table_name = table_name;
+        node->schema = schema;
+        node->current_tuple_id = NULL;
+    }
+    return node;
+}
+
+
+
+Tuple *selectNext(void *self) {
+    SelectNode *node = self;
+    PlanNode *child_node = ((PlanNode *) self)->left_tree;
+
+    for (;;) {
+        Tuple *tuple = child_node->next(child_node);
+        if (tuple != NULL) {
+            if (node->filter(tuple)) {
+                return tuple;
+            }
+        } else {
+            return NULL;
+        }
+
+    }
+
+    return NULL;
+}
+
+
+SelectNode *makeSelectNode(bool (*predicate)(Tuple *)) {
+
+    SelectNode *node = malloc(sizeof(SelectNode));
+    if (node != NULL) {
+        node->plan_node.next = &selectNext;
+        node->filter = predicate;
+    }
+    return node;
+}
+
+
+bool fn(Tuple *source) {
+    char query[100] = "Money Train (1995)";
+    char field[] = "title";
+    // get char length from schema. Pass field to select node (schema, title)
+    Buffer *buffer = new_buffer_of_size(my_char.size);
+    serialize_char_array(query, my_char.size, buffer);
+
+    char tuple_title[my_char.size];
+    memcpy(tuple_title, source->buffer->data + 4, my_char.size);
+    return memcmp(buffer->data, tuple_title, my_char.size) == 0 ? true : false;
+}
 
 int main(void) {
 
@@ -102,5 +143,27 @@ int main(void) {
     PlanNode *node[] = { (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
     PlanNode *root = node[0];
     print_hex_memory(root->next(root)->buffer->data);
-    print_hex_memory(root->next(root)->buffer->data);
+
+    printf("------------------\n");
+    PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
+    PlanNode *root2 = node2[0];
+    root2->left_tree = node2[1];
+    print_hex_memory(root2->next(root2)->buffer->data);
+    printf("------------------\n");
+
+    // predicate tests
+    // Tuple *source = root->next(root);
+    char query[100] = "Money Train (1995)";
+    // char field[] = "title";
+    // // get char length from schema. Pass field to select node (schema, title)
+    Buffer *query_buffer = new_buffer_of_size(100);
+    serialize_char_array(query, my_char.size, query_buffer);
+
+    // char tuple_title[100];
+    // memcpy(tuple_title, source->buffer->data + 4, 100);
+    print_hex_memory(query_buffer->data);
+    // printf("result %s\n", memcmp(query_buffer->data, tuple_title, 100) == 0 ? "true" : "false");
+    // print_hex_memory(tuple_title);
+
+
 }
