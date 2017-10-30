@@ -64,7 +64,9 @@ void serialize_char_array(char *src, int size, Buffer *b);
 void deserialize_int(Buffer *src, struct Element *dst);
 void deserialize_into_int(char *src, int offset, int *dst);
 void deserialize_double(Buffer *src, struct Element *dst);
+void deserialize_into_double(char *src, int offset, double *dst);
 void deserialize_char_array(Buffer *src, struct Element *dst, int size);
+void deserialize_into_char_array(char *src, char *dst, int offset, int size);
 
 // heap file
 void heap_read(struct Element *tuple, FILE *heap_fp, TupleId tuple_id, Schema schema);

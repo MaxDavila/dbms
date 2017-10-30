@@ -12,11 +12,11 @@ int main(void) {
     serialize_char_array(string, 200, src);
     serialize_double(4.9, src);
 
-    Buffer *dst = new_buffer();
-    deserialize_int(dst, &arr[0]);
+    src->offset = 0;
+    deserialize_int(src, &arr[0]);
     arr[1].str = malloc(200);
-    deserialize_char_array(dst, &arr[1], 200);
-    deserialize_double(dst, &arr[2]);
+    deserialize_char_array(src, &arr[1], 200);
+    deserialize_double(src, &arr[2]);
 
     char *address = src->data;
     printf("Runnig serializer tests\n"); 

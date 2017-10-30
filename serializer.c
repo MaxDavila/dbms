@@ -63,7 +63,15 @@ void deserialize_double(Buffer *src, struct Element *dst) {
     src->offset += sizeof(double);
 }
 
+void deserialize_into_double(char *src, int offset, double *dst) {
+    memcpy(dst, src + offset, sizeof(double));
+}
+
 void deserialize_char_array(Buffer *src, struct Element *dst, int size) {
     memcpy(dst->str, ((char *) src->data) + src->offset, size);
     src->offset += size;
+}
+
+void deserialize_into_char_array(char *src, char *dst, int offset, int size) {
+    memcpy(dst, src + offset, size);
 }
