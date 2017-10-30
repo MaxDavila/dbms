@@ -69,9 +69,6 @@ Tuple *scanNext(void *self) {
         }
     }
 
-
-
-
     Buffer *buffer = new_buffer_of_size(node->schema.size);
     Tuple *tuple = malloc(sizeof(Tuple));
     tuple->tuple_id = *node->current_tuple_id;
@@ -79,9 +76,10 @@ Tuple *scanNext(void *self) {
     tuple->buffer = buffer;
 
     heap_read_raw_tuple(*tuple, heap_fp);
-    return tuple;
-  
     fclose(heap_fp);
+
+    return tuple;
+
 }
 
 ScanNode *makeScanNode(char table_name[], Schema schema) {
@@ -105,16 +103,16 @@ Tuple *selectNext(void *self) {
 
     for (;;) {
         Tuple *tuple = child_node->next(child_node);
-
         if (tuple != NULL) {
+
             if (node->filter(tuple)) {
                 return tuple;
             }
+            free(tuple);
         } else {
 
             return NULL;
         }
-
     }
 
     return NULL;
@@ -264,7 +262,10 @@ bool fn2(Tuple *source) {
 
     char tuple_field[my_unsigned_int.size];
     memcpy(tuple_field, source->buffer->data, my_unsigned_int.size);
-    return memcmp(buffer->data, tuple_field, my_unsigned_int.size) == 0 ? true : false;
+    int matched = memcmp(buffer->data, tuple_field, my_unsigned_int.size);
+
+    free(buffer);
+    return matched == 0 ? true : false;
 }
 
 
@@ -291,8 +292,11 @@ void print_debug_tuple(Tuple *tuple) {
             case mdb_unsigned_char: {
                 size_t size = schema.types[i]->size;
                 char *value = malloc(size);
+
                 deserialize_into_char_array(tuple->buffer->data, value, tuple->buffer->offset, size);
                 printf("%s %s | ", schema.fields[i], value);
+                free(value);
+
                 break;
             }
         }
@@ -312,16 +316,16 @@ int main(void) {
     PlanNode *root = node[0];
     Tuple *result = root->next(root);
     print_debug_tuple(result);
-    print_hex_memory(result->buffer->data);
+    // print_hex_memory(result->buffer->data);
 
     printf("------------------\n");
-    PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
+    PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
     PlanNode *root2 = node2[0];
     root2->left_tree = node2[1];
 
     Tuple *result2 = root2->next(root2);
     print_debug_tuple(result2);
-    print_hex_memory(result2->buffer->data);
+    // print_hex_memory(result2->buffer->data);
     printf("------------------\n");
 
     char *proj_fields[] = { "id", "title" };
@@ -334,7 +338,7 @@ int main(void) {
 
     Tuple *result3 = root3->next(root3);
     print_debug_tuple(result3);
-    print_hex_memory(result3->buffer->data);
+    // print_hex_memory(result3->buffer->data);
     printf("------------------\n");
 
     char *proj_fields2[] = { "id" };
