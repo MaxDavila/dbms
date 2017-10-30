@@ -30,6 +30,12 @@ typedef struct project_node {
     Schema projected_schema;
 } ProjectNode;
 
+typedef struct nested_loop_join_node {
+    PlanNode plan_node;
+    bool (*join)(Tuple *r, Tuple *s);
+    Tuple *current_outer_tuple;
+} NestedLoopJoinNode;
+
 // SCAN node
 
 Tuple *scanNext(void *self) {
@@ -241,10 +247,94 @@ PlanNode *makeAverageNode() {
     return node;
 }
 
+// NESTED loop join
+void merge_schemas(Schema inner_schema, Schema outer_schema, Schema *joined) {
+
+    joined->field_count = inner_schema.field_count + outer_schema.field_count;
+    joined->size = inner_schema.size + outer_schema.size;
+
+    // join schema fields and types
+    char **joined_fields = (char**) calloc(inner_schema.field_count + outer_schema.field_count, sizeof(char*));
+    DbType **joined_types = (DbType**) calloc(inner_schema.field_count + outer_schema.field_count, sizeof(DbType*));
+
+    for (int i = 0; i < inner_schema.field_count; i++) {
+        joined_fields[i] = (char*) calloc(strlen(inner_schema.fields[i]), sizeof(char));
+        strcpy(joined_fields[i], inner_schema.fields[i]);
+
+        joined_types[i] = inner_schema.types[i];
+    }
+
+    int offset = inner_schema.field_count;
+    for (int i = 0; i < outer_schema.field_count; i++) {
+        joined_fields[i + offset] = (char*) calloc(strlen(outer_schema.fields[i]), sizeof(char));
+        strcpy(joined_fields[i + offset], outer_schema.fields[i]);
+
+        joined_types[i + offset] = outer_schema.types[i];
+    }
+    joined->fields = joined_fields;
+    joined->types = joined_types;
+}
+
+// It scans the inner relation to join with current outer tuple.
+Tuple *nestedLoopNext(void *self) {
+    NestedLoopJoinNode *nested_loop_node = self;
+    PlanNode *outer_node = ((PlanNode *) self)->left_tree;
+    PlanNode *inner_node = ((PlanNode *) self)->right_tree;
+
+    Tuple *inner;
+    Tuple *outer = (nested_loop_node->current_outer_tuple == NULL) ? outer_node->next(outer_node) : nested_loop_node->current_outer_tuple;
+
+    // we've run out of records to scan once the outernode returns no more tuples NULL
+    if (outer == NULL)
+        return NULL;
+
+    while ((inner = inner_node->next(inner_node)) != NULL) {
+        Tuple *joined_tuple = malloc(sizeof(Tuple));
+        Schema *joined_schema = malloc(sizeof(Schema));
+
+        merge_schemas(inner->schema, outer->schema, joined_schema);
+        joined_tuple->schema = *joined_schema;
+
+        // join data
+
+        return joined_tuple;
+    }
+
+    // TODO: reset inner relation
+    inner_node->reset();
+    nested_loop_node->current_outer_tuple = outer_node->next(outer_node);
+
+    return NULL;
+}
+
+NestedLoopJoinNode *makeNestedLoopJoinNode(bool (*theta_fn)(Tuple *r, Tuple *s)) {
+
+    NestedLoopJoinNode *node = malloc(sizeof(NestedLoopJoinNode));
+    if (node != NULL) {
+        node->plan_node.next = &nestedLoopNext;
+        node->join = theta_fn;
+    }
+    return node;
+}
+
+
+bool theta(Tuple *r, Tuple *s) {
+    // r.id = s.movie_id
+    // TODO: derive compare fields dynamically
+
+    char r_field[my_unsigned_int.size];
+    memcpy(r_field, r->buffer->data, my_unsigned_int.size);
+
+    char s_field[my_unsigned_int.size];
+    memcpy(s_field, s->buffer->data, my_unsigned_int.size);
+
+    return memcmp(r_field, s_field, my_unsigned_int.size);
+}
+
 bool fn(Tuple *source) {
     char query[100] = "Money Train (1995)";
     char field[] = "title";
-    // get char length from schema. Pass field to select node (schema, title)
+
     Buffer *buffer = new_buffer_of_size(my_char.size);
     serialize_char_array(query, my_char.size, buffer);
 
@@ -305,6 +395,7 @@ void print_debug_tuple(Tuple *tuple) {
     }
     printf("\n");
 }
+
 int main(void) {
 
     // TODO fix duplication
@@ -372,5 +463,15 @@ int main(void) {
     // printf("result %s\n", memcmp(query_buffer->data, tuple_title, 100) == 0 ? "true" : "false");
     // print_hex_memory(tuple_title);
 
+    // merge schema tests
+    Schema *merged_schema = malloc(sizeof(Schema));
+    merge_schemas(proj_fields_schema, proj_fields_schema2, merged_schema);
+    printf("merged_schema field should be id  %s\n", merged_schema->fields[0]);
+    printf("merged_schema field should be title %s\n", merged_schema->fields[1]);
+    printf("merged_schema field should be id %s\n", merged_schema->fields[2]);
+
+    printf("merged_schema type should be int  %d\n", merged_schema->types[0]->size);
+    printf("merged_schema type should be char %d\n", merged_schema->types[1]->size);
+    printf("merged_schema type should be int %d\n", merged_schema->types[2]->size);
 
 }
