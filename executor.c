@@ -25,6 +25,12 @@ typedef struct select_node {
     bool (*filter)(Tuple*);
 } SelectNode;
 
+typedef struct project_node {
+    PlanNode plan_node;
+    Schema projected_schema;
+} ProjectNode;
+
+// SCAN node
 
 Tuple *scanNext(void *self) {
     ScanNode *node = self;
@@ -90,6 +96,7 @@ ScanNode *makeScanNode(char table_name[], Schema schema) {
 
 
 
+// SELECT node
 Tuple *selectNext(void *self) {
     SelectNode *node = self;
     PlanNode *child_node = ((PlanNode *) self)->left_tree;
@@ -120,6 +127,60 @@ SelectNode *makeSelectNode(bool (*predicate)(Tuple *)) {
     return node;
 }
 
+
+// PROJECT node
+
+// assumes projected schema fields is an ordered subset of src schema
+// i.e src_schema.fields = { "id", "title", "genre"}
+// cannot be projected_schema.fields = { "genre", "title" }
+void *project(Tuple *src_tuple, Schema projected_schema) {
+    
+    Schema src_schema = src_tuple->schema;
+    int offset = 0;
+
+    Tuple *projected_tuple = malloc(sizeof(Tuple));
+    projected_tuple->schema = projected_schema;
+    projected_tuple->buffer = new_buffer_of_size(projected_schema.size);
+
+    for (int i = 0; i < src_schema.field_count; i++) {
+        for (int j = 0; j < projected_schema.field_count; j++) {
+
+            if (strcmp(projected_schema.fields[j], src_schema.fields[i]) == 0) {
+                memcpy(projected_tuple->buffer->data + projected_tuple->buffer->offset, src_tuple->buffer->data + offset, src_schema.types[i]->size);
+
+                projected_tuple->buffer->offset += src_schema.types[i]->size;
+                break;
+            }
+        }
+        offset += src_schema.types[i]->size;
+    }
+    return projected_tuple;
+}
+
+Tuple *projectNext(void *self) {
+    PlanNode *plan_node = self;
+    PlanNode *child_node = plan_node->left_tree;
+    ProjectNode *project_node = (ProjectNode *) self;
+
+    Tuple *tuple = child_node->next(child_node);
+    if (tuple != NULL) {
+
+        tuple = project(tuple, project_node->projected_schema);
+    }
+    return tuple;
+}
+
+
+ProjectNode *makeProjectNode(Schema new_schema) {
+
+    ProjectNode *node = malloc(sizeof(ProjectNode));
+
+    if (node != NULL) {
+        node->plan_node.next = &projectNext;
+        node->projected_schema = new_schema;
+    }
+    return node;
+}
 
 bool fn(Tuple *source) {
     char query[100] = "Money Train (1995)";
@@ -163,6 +224,15 @@ int main(void) {
     root2->left_tree = node2[1];
     print_hex_memory(root2->next(root2)->buffer->data);
     printf("------------------\n");
+
+    char *proj_fields[] = { "id", "title" };
+    DbType *proj_field_types[] = { &my_unsigned_int, &my_char};
+    Schema proj_fields_schema = { "movies", proj_fields, 2, 104, proj_field_types };
+    PlanNode *node3[] = { (PlanNode *) makeProjectNode(proj_fields_schema), (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
+    PlanNode *root3 = node3[0];
+    root3->left_tree = node3[1];
+    root3->left_tree->left_tree = node3[2];
+    print_hex_memory(root3->next(root3)->buffer->data);
 
     // predicate tests
     // Tuple *source = root->next(root);
