@@ -60,14 +60,16 @@ Tuple *scanNext(void *self) {
     // if at EOF
     } else if (node->current_tuple_id->block_idx == last_block_idx && node->current_tuple_id->offset == last_tuple_offset) {
         return NULL;
+    } else {
+        // otherwise increment current tuple offset by tuple size
+        node->current_tuple_id->offset += node->schema.size;
+        if (node->schema.size > (BLOCK_SIZE - node->current_tuple_id->offset)) {
+            node->current_tuple_id->block_idx++;
+            node->current_tuple_id->offset = 8;
+        }
     }
 
-    // otherwise increment current tuple offset by tuple size
-    node->current_tuple_id->offset += node->schema.size;
-    if (node->schema.size > (BLOCK_SIZE - node->current_tuple_id->offset)) {
-        node->current_tuple_id->block_idx++;
-        node->current_tuple_id->offset = 8;
-    }
+
 
 
     Buffer *buffer = new_buffer_of_size(node->schema.size);
@@ -272,6 +274,7 @@ void print_debug_tuple(Tuple *tuple) {
     tuple->buffer->offset = 0;
 
     for (int i = 0; i < schema.field_count; i++) {
+
         switch (schema.types[i]->type) {
             case mdb_unsigned_int: {
                 int value = 0;
@@ -315,7 +318,10 @@ int main(void) {
     PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
     PlanNode *root2 = node2[0];
     root2->left_tree = node2[1];
-    print_hex_memory(root2->next(root2)->buffer->data);
+
+    Tuple *result2 = root2->next(root2);
+    print_debug_tuple(result2);
+    print_hex_memory(result2->buffer->data);
     printf("------------------\n");
 
     char *proj_fields[] = { "id", "title" };
@@ -325,9 +331,10 @@ int main(void) {
     PlanNode *root3 = node3[0];
     root3->left_tree = node3[1];
     root3->left_tree->left_tree = node3[2];
-    print_hex_memory(root3->next(root3)->buffer->data);
 
-
+    Tuple *result3 = root3->next(root3);
+    print_debug_tuple(result3);
+    print_hex_memory(result3->buffer->data);
     printf("------------------\n");
 
     char *proj_fields2[] = { "id" };
@@ -338,6 +345,10 @@ int main(void) {
     root4->left_tree = node4[1];
     root4->left_tree->left_tree = node4[2];
     root4->left_tree->left_tree->left_tree = node4[3];
+
+    // Tuple *result4 = root4->next(root4);
+    // print_debug_tuple(result4);
+    // print_hex_memory(result4->buffer->data);
 
     char *res = root4->next(root4)->buffer->data;
     printf("result should be 10  %f\n", * ((double *) res));
