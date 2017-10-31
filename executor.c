@@ -40,18 +40,19 @@ Tuple *scanNext(void *self) {
         node->current_tuple_id->block_idx = 0;
         node->current_tuple_id->offset = 8;
 
-    // otherwise increment current tuple offset by tuple size
     } else {
+
+        // if at EOF
+        if (node->current_tuple_id->block_idx == last_block_idx && node->current_tuple_id->offset == last_tuple_offset) {
+            return NULL;
+        }
+
+        // otherwise increment current tuple offset by tuple size
         node->current_tuple_id->offset += node->schema.size;
         if (node->schema.size > (BLOCK_SIZE - node->current_tuple_id->offset)) {
             node->current_tuple_id->block_idx++;
             node->current_tuple_id->offset = 8;
         }
-    }
-
-    // if at EOF
-    if (node->current_tuple_id->block_idx == last_block_idx && node->current_tuple_id->offset == last_tuple_offset) {
-        return NULL;
     }
 
     Buffer *buffer = new_buffer_of_size(node->schema.size);
@@ -358,9 +359,23 @@ bool fn2(Tuple *source) {
     return matched == 0 ? true : false;
 }
 
+PlanNode *build_tree(PlanNode *plan_node[], int length) {
+    if (length == 1)
+        return plan_node[0];
+
+    plan_node[0]->left_tree = build_tree(&plan_node[1], length -1);
+    return plan_node[0];
+}
+
+void execute(PlanNode *root) {
+    Tuple *tuple;
+    while ((tuple = root->next(root)) != NULL) {
+        print_debug_tuple(tuple);
+    }
+}
+
 int main(void) {
 
-    // TODO fix duplication
     char *movie_fields[] = { "id", "title", "genres" };
     DbType *movie_types[] = { &my_unsigned_int, &my_char, &my_char };
     Schema movie_schema = { "movies",  movie_fields, 3, 204, movie_types };
@@ -370,29 +385,21 @@ int main(void) {
     Schema rating_schema = { "ratings",  rating_fields, 4, 116, rating_types };
 
     PlanNode *node[] = { (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
-    PlanNode *root = node[0];
-    Tuple *result = root->next(root);
-    print_debug_tuple(result);
-    // print_hex_memory(result->buffer->data);
+    PlanNode *root = build_tree(node, 1);
+    execute(build_tree(node, 1));
 
     printf("------------------\n");
     PlanNode *node2[] = { (PlanNode *) makeSelectNode(fn), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
-    PlanNode *root2 = node2[0];
-    root2->left_tree = node2[1];
+    PlanNode *root2 = build_tree(node2, 2);
+    execute(build_tree(node2, 2));
 
-    Tuple *result2 = root2->next(root2);
-    print_debug_tuple(result2);
-    // print_hex_memory(result2->buffer->data);
     printf("------------------\n");
 
     char *proj_fields[] = { "id", "title" };
     DbType *proj_field_types[] = { &my_unsigned_int, &my_char};
     Schema proj_fields_schema = { "movies", proj_fields, 2, 104, proj_field_types };
     PlanNode *node3[] = { (PlanNode *) makeProjectNode(proj_fields_schema), (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
-    PlanNode *root3 = node3[0];
-    root3->left_tree = node3[1];
-    root3->left_tree->left_tree = node3[2];
-
+    PlanNode *root3 = build_tree(node3, 3);
     Tuple *result3 = root3->next(root3);
     print_debug_tuple(result3);
     // print_hex_memory(result3->buffer->data);
@@ -402,10 +409,7 @@ int main(void) {
     DbType *proj_field_types2[] = { &my_unsigned_int};
     Schema proj_fields_schema2 = { "movies", proj_fields2, 1, 4, proj_field_types2 };
     PlanNode *node4[] = { (PlanNode *) makeAverageNode(), (PlanNode *) makeProjectNode(proj_fields_schema2), (PlanNode *) makeSelectNode(fn2), (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
-    PlanNode *root4 = node4[0];
-    root4->left_tree = node4[1];
-    root4->left_tree->left_tree = node4[2];
-    root4->left_tree->left_tree->left_tree = node4[3];
+    PlanNode *root4 = build_tree(node4, 4);
 
     // Tuple *result4 = root4->next(root4);
     // print_debug_tuple(result4);
@@ -446,9 +450,5 @@ int main(void) {
     PlanNode *root5 = node5[0];
     root5->left_tree = node5[1];
     root5->right_tree = node5[2];
-
-    Tuple *tuple10;
-    while ((tuple10 = root5->next(root5)) != NULL) {
-        print_debug_tuple(tuple10);
-    }
+    execute(root5);
 }
