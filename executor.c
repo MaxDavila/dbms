@@ -1,40 +1,6 @@
 #include <stdio.h>
 #include <serializer.h>
 
-typedef enum { false, true } bool;
-enum PlanNodeType { select_node_t, scan_node_t };
-
-typedef struct PlanNode PlanNode;
-struct PlanNode {
-    Tuple *(*next)(void *self);
-    PlanNode *left_tree;
-    PlanNode *right_tree;
-    void (*reset)(void *self);
-    enum PlanNodeType nodeType;
-};
-
-typedef struct scan_node {
-    PlanNode plan_node;
-    TupleId *current_tuple_id;
-    char *table_name;
-    Schema schema;
-} ScanNode;
-
-typedef struct select_node {
-    PlanNode plan_node;
-    bool (*filter)(Tuple*);
-} SelectNode;
-
-typedef struct project_node {
-    PlanNode plan_node;
-    Schema projected_schema;
-} ProjectNode;
-
-typedef struct nested_loop_join_node {
-    PlanNode plan_node;
-    bool (*join)(Tuple *r, Tuple *s);
-    Tuple *current_outer_tuple;
-} NestedLoopJoinNode;
 
 void reset_next(void *self) {
     PlanNode *node = self;
@@ -44,7 +10,7 @@ void reset_next(void *self) {
 
 void reset_scan(void *self) {
     ScanNode *node = self;
-    node->current_tuple_id = NULL;
+    node->current_tuple_id = NULL; 
 }
 
 
@@ -65,6 +31,8 @@ Tuple *scanNext(void *self) {
     int last_tuple_offset = 0;
     deserialize_into_int(first_bytes, 0, &last_block_idx);
     deserialize_into_int(first_bytes, 4, &last_tuple_offset);
+    if (node->schema.size > (BLOCK_SIZE - last_tuple_offset))
+        last_tuple_offset -= node->schema.size;
 
     // if current tuple id has not been set. Set it to point to the first record
     if (node->current_tuple_id == NULL) {
@@ -72,16 +40,18 @@ Tuple *scanNext(void *self) {
         node->current_tuple_id->block_idx = 0;
         node->current_tuple_id->offset = 8;
 
-    // if at EOF
-    } else if (node->current_tuple_id->block_idx == last_block_idx && node->current_tuple_id->offset == last_tuple_offset) {
-        return NULL;
+    // otherwise increment current tuple offset by tuple size
     } else {
-        // otherwise increment current tuple offset by tuple size
         node->current_tuple_id->offset += node->schema.size;
         if (node->schema.size > (BLOCK_SIZE - node->current_tuple_id->offset)) {
             node->current_tuple_id->block_idx++;
             node->current_tuple_id->offset = 8;
         }
+    }
+
+    // if at EOF
+    if (node->current_tuple_id->block_idx == last_block_idx && node->current_tuple_id->offset == last_tuple_offset) {
+        return NULL;
     }
 
     Buffer *buffer = new_buffer_of_size(node->schema.size);
@@ -297,37 +267,44 @@ Tuple *nestedLoopNext(void *self) {
     // we've run out of records to scan once the outernode returns no more tuples NULL
     if (outer == NULL)
         return NULL;
+   
 
-    while ((inner = inner_node->next(inner_node)) != NULL) {
-        Tuple *joined_tuple = malloc(sizeof(Tuple));
-        Schema *joined_schema = malloc(sizeof(Schema));
+    for (;;) {
+        while ((inner = inner_node->next(inner_node)) != NULL) {
+            Tuple *joined_tuple = malloc(sizeof(Tuple));
+            Schema *joined_schema = malloc(sizeof(Schema));
 
-        merge_schemas(outer->schema, inner->schema, joined_schema);
-        joined_tuple->schema = *joined_schema;
-    
-        bool matched = nested_loop_node->join(outer, inner);
+            merge_schemas(outer->schema, inner->schema, joined_schema);
+            joined_tuple->schema = *joined_schema;
 
-        if (matched) {
-            Buffer *merged_data = new_buffer_of_size(outer->buffer->size + inner->buffer->size);
-            memcpy(merged_data->data, outer->buffer->data, outer->buffer->size);
-            memcpy(merged_data->data + outer->buffer->size, inner->buffer->data, inner->buffer->size);
+            bool matched = nested_loop_node->join(outer, inner);
 
-            joined_tuple->buffer = merged_data;
-            return joined_tuple;
+            if (matched) {
+                Buffer *merged_data = new_buffer_of_size(outer->buffer->size + inner->buffer->size);
+                memcpy(merged_data->data, outer->buffer->data, outer->buffer->size);
+                memcpy(merged_data->data + outer->buffer->size, inner->buffer->data, inner->buffer->size);
 
-        } else {
-            free(outer);
-            free(inner);
-            free(joined_schema);
-            free(joined_tuple);
+                joined_tuple->buffer = merged_data;
+                return joined_tuple;
+
+            } else {
+
+                // free(outer);
+                free(inner);
+                free(joined_schema);
+                free(joined_tuple);
+            }
         }
+
+        // reset inner relation
+        inner_node->reset(inner_node);
+
+        nested_loop_node->current_outer_tuple = outer_node->next(outer_node);
+        outer = nested_loop_node->current_outer_tuple;
+
+        if (outer == NULL)
+            return NULL;
     }
-
-    // reset inner relation
-    inner_node->reset(inner_node);
-    nested_loop_node->current_outer_tuple = outer_node->next(outer_node);
-
-    return NULL;
 }
 
 NestedLoopJoinNode *makeNestedLoopJoinNode(bool (*theta_fn)(Tuple *r, Tuple *s)) {
@@ -351,8 +328,7 @@ bool theta(Tuple *r, Tuple *s) {
 
     char s_field[my_unsigned_int.size];
     memcpy(s_field, s->buffer->data + 4, my_unsigned_int.size);
-    return true;
-    // return memcmp(r_field, s_field, my_unsigned_int.size) == 0 ? true : false;
+    return memcmp(r_field, s_field, my_unsigned_int.size) == 0 ? true : false;
 }
 
 bool fn(Tuple *source) {
@@ -471,6 +447,8 @@ int main(void) {
     root5->left_tree = node5[1];
     root5->right_tree = node5[2];
 
-    Tuple *result5 = root5->next(root5);
-    print_debug_tuple(result5);
+    Tuple *tuple10;
+    while ((tuple10 = root5->next(root5)) != NULL) {
+        print_debug_tuple(tuple10);
+    }
 }

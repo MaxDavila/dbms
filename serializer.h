@@ -5,6 +5,8 @@
 #define DEFAULT_BUFFER_SIZE 32
 #define BLOCK_SIZE 4096
 
+typedef enum { false, true } bool;
+
 typedef struct buffer {
     void            *data;
     unsigned int    offset;
@@ -45,6 +47,39 @@ typedef struct tuple {
     Buffer *buffer;
 } Tuple;
 
+enum PlanNodeType { select_node_t, scan_node_t };
+
+typedef struct PlanNode PlanNode;
+struct PlanNode {
+    Tuple *(*next)(void *self);
+    PlanNode *left_tree;
+    PlanNode *right_tree;
+    void (*reset)(void *self);
+    enum PlanNodeType nodeType;
+};
+
+typedef struct scan_node {
+    PlanNode plan_node;
+    TupleId *current_tuple_id;
+    char *table_name;
+    Schema schema;
+} ScanNode;
+
+typedef struct select_node {
+    PlanNode plan_node;
+    bool (*filter)(Tuple*);
+} SelectNode;
+
+typedef struct project_node {
+    PlanNode plan_node;
+    Schema projected_schema;
+} ProjectNode;
+
+typedef struct nested_loop_join_node {
+    PlanNode plan_node;
+    bool (*join)(Tuple *r, Tuple *s);
+    Tuple *current_outer_tuple;
+} NestedLoopJoinNode;
 
 extern DbType my_unsigned_int;
 extern DbType my_char;

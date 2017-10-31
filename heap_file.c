@@ -27,6 +27,10 @@ void print_hex_memory(void *mem) {
 }
 
 void print_debug_tuple(Tuple *tuple) {
+    if (tuple == NULL) {
+        printf("Empty\n");
+        return;
+    }
 
     Schema schema = tuple->schema;
     tuple->buffer->offset = 0;
@@ -100,7 +104,7 @@ void parse_row(char *line, ssize_t line_length, char *output[]) {
         needle++;
     }
 }
-void serialize_row(Schema schema, Buffer *buffer, char *row[]) {
+bool serialize_row(Schema schema, Buffer *buffer, char *row[]) {
     for (int i = 0; i < schema.field_count; i++) {
 
         switch (schema.types[i]->type) {
@@ -115,7 +119,7 @@ void serialize_row(Schema schema, Buffer *buffer, char *row[]) {
 
                 // skipping rows longer than predetermined schema length
                 if (strlen(row[i]) >= my_char.size)
-                    return;
+                    return false;
 
                 char temp[100] = {0};
                 strcpy(temp, row[i]);
@@ -129,6 +133,7 @@ void serialize_row(Schema schema, Buffer *buffer, char *row[]) {
             }
         }
     }
+    return true;
 } 
 
 void heap_write(FILE *heap_fp, Buffer *serialization_buffer) {
@@ -208,8 +213,6 @@ void heap_read_raw_tuple(Tuple tuple, FILE *heap_fp) {
     fread(tuple.buffer->data, tuple.schema.size, 1, heap_fp);
 }
 
-
-
 // int main(void) {
 
 //     FILE *csv_fp;
@@ -218,10 +221,10 @@ void heap_read_raw_tuple(Tuple tuple, FILE *heap_fp) {
 //     char *read_buffer = NULL;
 //     size_t buffer_len = 0;
 //     ssize_t line_length;
-//     Schema schema = rating_schema;
+//     Schema schema = movie_schema;
 
-//     csv_fp = fopen("data/movielens/ratings_small.csv", "r");
-//     heap_fp = fopen("data/ratings.table", "wb+");
+//     csv_fp = fopen("data/movielens/movies_small.csv", "r");
+//     heap_fp = fopen("data/movies.table", "wb+");
 //     if (csv_fp == NULL)
 //         exit(EXIT_FAILURE);
 
@@ -232,27 +235,30 @@ void heap_read_raw_tuple(Tuple tuple, FILE *heap_fp) {
 //         parse_row(read_buffer, line_length, parsed_row);
 
 //         Buffer *serialization_buffer = new_buffer_of_size(schema.size);
-//         serialize_row(schema, serialization_buffer, parsed_row);
-//         heap_write(heap_fp, serialization_buffer);
+//         if (serialize_row(schema, serialization_buffer, parsed_row)) {
+
+//             heap_write(heap_fp, serialization_buffer);
+
+//             printf("OUTPUT 1 %s\n", parsed_row[0]);
+//             printf("OUTPUT 2 %s\n", parsed_row[1]);
+//             printf("OUTPUT 3 %s\n", parsed_row[2]);
+//             printf("OUTPUT 4 %s\n", parsed_row[3]);
+//         }
+        
 //         free(serialization_buffer);
 
-
-//         // printf("OUTPUT 1%s\n", parsed_row[0]);
-//         // printf("OUTPUT 2 %s\n", parsed_row[1]);
-//         // printf("OUTPUT 3 %s\n", parsed_row[2]);
-//         // printf("OUTPUT 4 %s\n", parsed_row[3]);
 
 //     }
 
 //     // attempt to read a record given a block id and offset
 //     TupleId tuple_id = {0, 8};
-//     struct Element *arr = malloc(sizeof(struct Element) * schema.field_count);
-//     for (int i = 0; i < schema.field_count; i++) {
-//         if (schema.types[i]->type == mdb_unsigned_char) {
-//             arr[i].str = malloc(my_char.size);
-//         }
-//     }
-//     heap_read(arr, heap_fp, tuple_id, schema);
+//     // struct Element *arr = malloc(sizeof(struct Element) * schema.field_count);
+//     // for (int i = 0; i < schema.field_count; i++) {
+//     //     if (schema.types[i]->type == mdb_unsigned_char) {
+//     //         arr[i].str = malloc(my_char.size);
+//     //     }
+//     // }
+//     // heap_read(arr, heap_fp, tuple_id, schema);
 
 //     // test read raw tuple
 //     Buffer *buffer = new_buffer_of_size(schema.size);
