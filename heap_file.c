@@ -11,7 +11,7 @@ char *movie_fields[] = { "id", "title", "genres" };
 DbType *movie_types[] = { &my_unsigned_int, &my_char, &my_char };
 Schema movie_schema = { "movies",  movie_fields, 3, 204, movie_types };
 
-char *rating_fields[] = { "user_id", "movie_id" "rating", "timestamp" };
+char *rating_fields[] = { "user_id", "movie_id", "rating", "timestamp" };
 DbType *rating_types[] = { &my_unsigned_int, &my_unsigned_int, &my_double, &my_char };
 Schema rating_schema = { "ratings",  rating_fields, 4, 116, rating_types };
 
@@ -25,6 +25,45 @@ void print_hex_memory(void *mem) {
   }
   printf("\n");
 }
+
+void print_debug_tuple(Tuple *tuple) {
+
+    Schema schema = tuple->schema;
+    tuple->buffer->offset = 0;
+
+    for (int i = 0; i < schema.field_count; i++) {
+
+        switch (schema.types[i]->type) {
+            case mdb_unsigned_int: {
+                int value = 0;
+                deserialize_into_int(tuple->buffer->data, tuple->buffer->offset, &value);
+                printf("%s %d | ", schema.fields[i], value);
+
+                break;
+            }
+            case mdb_double: {
+                double value = 0;
+                deserialize_into_double(tuple->buffer->data, tuple->buffer->offset, &value);
+                printf("%s %f | ", schema.fields[i], value);
+                break;
+            }
+            case mdb_unsigned_char: {
+                size_t size = schema.types[i]->size;
+                char *value = malloc(size);
+
+                deserialize_into_char_array(tuple->buffer->data, value, tuple->buffer->offset, size);
+                printf("%s %s | ", schema.fields[i], value);
+                free(value);
+
+                break;
+            }
+        }
+        tuple->buffer->offset += schema.types[i]->size;
+
+    }
+    printf("\n");
+}
+
 
 void parse_row(char *line, ssize_t line_length, char *output[]) {
     char *new_string;

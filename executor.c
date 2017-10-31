@@ -9,7 +9,7 @@ struct PlanNode {
     Tuple *(*next)(void *self);
     PlanNode *left_tree;
     PlanNode *right_tree;
-    void *(*reset)(void);
+    void (*reset)(void *self);
     enum PlanNodeType nodeType;
 };
 
@@ -36,16 +36,25 @@ typedef struct nested_loop_join_node {
     Tuple *current_outer_tuple;
 } NestedLoopJoinNode;
 
-// SCAN node
+void reset_next(void *self) {
+    PlanNode *node = self;
+    node->left_tree->reset(node->left_tree);
+    node->right_tree->reset(node->right_tree);
+}
 
+void reset_scan(void *self) {
+    ScanNode *node = self;
+    node->current_tuple_id = NULL;
+}
+
+
+// SCAN node
 Tuple *scanNext(void *self) {
     ScanNode *node = self;
-    // TupleId current_tuple_id = scan_node->current_tuple_id;
     FILE *heap_fp = fopen(node->table_name, "rb+");
 
     if (heap_fp == NULL)
         exit(EXIT_FAILURE);
-
 
     // TODO: remove duplication from heap file
     // rad first 8 bytes so we can check for EOF
@@ -96,6 +105,7 @@ ScanNode *makeScanNode(char table_name[], Schema schema) {
         node->table_name = table_name;
         node->schema = schema;
         node->current_tuple_id = NULL;
+        node->plan_node.reset = &reset_scan;
     }
     return node;
 }
@@ -248,28 +258,28 @@ PlanNode *makeAverageNode() {
 }
 
 // NESTED loop join
-void merge_schemas(Schema inner_schema, Schema outer_schema, Schema *joined) {
+void merge_schemas(Schema outer, Schema inner, Schema *joined) {
 
-    joined->field_count = inner_schema.field_count + outer_schema.field_count;
-    joined->size = inner_schema.size + outer_schema.size;
+    joined->field_count = outer.field_count + inner.field_count;
+    joined->size = outer.size + inner.size;
 
     // join schema fields and types
-    char **joined_fields = (char**) calloc(inner_schema.field_count + outer_schema.field_count, sizeof(char*));
-    DbType **joined_types = (DbType**) calloc(inner_schema.field_count + outer_schema.field_count, sizeof(DbType*));
+    char **joined_fields = (char**) calloc(outer.field_count + inner.field_count, sizeof(char*));
+    DbType **joined_types = (DbType**) calloc(outer.field_count + inner.field_count, sizeof(DbType*));
 
-    for (int i = 0; i < inner_schema.field_count; i++) {
-        joined_fields[i] = (char*) calloc(strlen(inner_schema.fields[i]), sizeof(char));
-        strcpy(joined_fields[i], inner_schema.fields[i]);
+    for (int i = 0; i < outer.field_count; i++) {
+        joined_fields[i] = (char*) calloc(strlen(outer.fields[i]), sizeof(char));
+        strcpy(joined_fields[i], outer.fields[i]);
 
-        joined_types[i] = inner_schema.types[i];
+        joined_types[i] = outer.types[i];
     }
 
-    int offset = inner_schema.field_count;
-    for (int i = 0; i < outer_schema.field_count; i++) {
-        joined_fields[i + offset] = (char*) calloc(strlen(outer_schema.fields[i]), sizeof(char));
-        strcpy(joined_fields[i + offset], outer_schema.fields[i]);
+    int offset = outer.field_count;
+    for (int i = 0; i < inner.field_count; i++) {
+        joined_fields[i + offset] = (char*) calloc(strlen(inner.fields[i]), sizeof(char));
+        strcpy(joined_fields[i + offset], inner.fields[i]);
 
-        joined_types[i + offset] = outer_schema.types[i];
+        joined_types[i + offset] = inner.types[i];
     }
     joined->fields = joined_fields;
     joined->types = joined_types;
@@ -281,8 +291,8 @@ Tuple *nestedLoopNext(void *self) {
     PlanNode *outer_node = ((PlanNode *) self)->left_tree;
     PlanNode *inner_node = ((PlanNode *) self)->right_tree;
 
-    Tuple *inner;
     Tuple *outer = (nested_loop_node->current_outer_tuple == NULL) ? outer_node->next(outer_node) : nested_loop_node->current_outer_tuple;
+    Tuple *inner;
 
     // we've run out of records to scan once the outernode returns no more tuples NULL
     if (outer == NULL)
@@ -292,16 +302,29 @@ Tuple *nestedLoopNext(void *self) {
         Tuple *joined_tuple = malloc(sizeof(Tuple));
         Schema *joined_schema = malloc(sizeof(Schema));
 
-        merge_schemas(inner->schema, outer->schema, joined_schema);
+        merge_schemas(outer->schema, inner->schema, joined_schema);
         joined_tuple->schema = *joined_schema;
+    
+        bool matched = nested_loop_node->join(outer, inner);
 
-        // join data
+        if (matched) {
+            Buffer *merged_data = new_buffer_of_size(outer->buffer->size + inner->buffer->size);
+            memcpy(merged_data->data, outer->buffer->data, outer->buffer->size);
+            memcpy(merged_data->data + outer->buffer->size, inner->buffer->data, inner->buffer->size);
 
-        return joined_tuple;
+            joined_tuple->buffer = merged_data;
+            return joined_tuple;
+
+        } else {
+            free(outer);
+            free(inner);
+            free(joined_schema);
+            free(joined_tuple);
+        }
     }
 
-    // TODO: reset inner relation
-    inner_node->reset();
+    // reset inner relation
+    inner_node->reset(inner_node);
     nested_loop_node->current_outer_tuple = outer_node->next(outer_node);
 
     return NULL;
@@ -313,6 +336,7 @@ NestedLoopJoinNode *makeNestedLoopJoinNode(bool (*theta_fn)(Tuple *r, Tuple *s))
     if (node != NULL) {
         node->plan_node.next = &nestedLoopNext;
         node->join = theta_fn;
+        node->plan_node.reset = &reset_next;
     }
     return node;
 }
@@ -326,9 +350,9 @@ bool theta(Tuple *r, Tuple *s) {
     memcpy(r_field, r->buffer->data, my_unsigned_int.size);
 
     char s_field[my_unsigned_int.size];
-    memcpy(s_field, s->buffer->data, my_unsigned_int.size);
-
-    return memcmp(r_field, s_field, my_unsigned_int.size);
+    memcpy(s_field, s->buffer->data + 4, my_unsigned_int.size);
+    return true;
+    // return memcmp(r_field, s_field, my_unsigned_int.size) == 0 ? true : false;
 }
 
 bool fn(Tuple *source) {
@@ -358,50 +382,16 @@ bool fn2(Tuple *source) {
     return matched == 0 ? true : false;
 }
 
-
-void print_debug_tuple(Tuple *tuple) {
-
-    Schema schema = tuple->schema;
-    tuple->buffer->offset = 0;
-
-    for (int i = 0; i < schema.field_count; i++) {
-
-        switch (schema.types[i]->type) {
-            case mdb_unsigned_int: {
-                int value = 0;
-                deserialize_into_int(tuple->buffer->data, tuple->buffer->offset, &value);
-                printf("%s %d | ", schema.fields[i], value);
-                break;
-            }
-            case mdb_double: {
-                double value = 0;
-                deserialize_into_double(tuple->buffer->data, tuple->buffer->offset, &value);
-                printf("%s %f | ", schema.fields[i], value);
-                break;
-            }
-            case mdb_unsigned_char: {
-                size_t size = schema.types[i]->size;
-                char *value = malloc(size);
-
-                deserialize_into_char_array(tuple->buffer->data, value, tuple->buffer->offset, size);
-                printf("%s %s | ", schema.fields[i], value);
-                free(value);
-
-                break;
-            }
-        }
-        tuple->buffer->offset += schema.types[i]->size;
-
-    }
-    printf("\n");
-}
-
 int main(void) {
 
     // TODO fix duplication
     char *movie_fields[] = { "id", "title", "genres" };
     DbType *movie_types[] = { &my_unsigned_int, &my_char, &my_char };
     Schema movie_schema = { "movies",  movie_fields, 3, 204, movie_types };
+
+    char *rating_fields[] = { "user_id", "movie_id", "rating", "timestamp" };
+    DbType *rating_types[] = { &my_unsigned_int, &my_unsigned_int, &my_double, &my_char };
+    Schema rating_schema = { "ratings",  rating_fields, 4, 116, rating_types };
 
     PlanNode *node[] = { (PlanNode *) makeScanNode("data/movies.table", movie_schema) };
     PlanNode *root = node[0];
@@ -474,4 +464,13 @@ int main(void) {
     printf("merged_schema type should be char %d\n", merged_schema->types[1]->size);
     printf("merged_schema type should be int %d\n", merged_schema->types[2]->size);
 
+    printf("------------------\n");
+
+    PlanNode *node5[] = { (PlanNode *) makeNestedLoopJoinNode(theta), (PlanNode *) makeScanNode("data/movies.table", movie_schema), (PlanNode *) makeScanNode("data/ratings.table", rating_schema) };
+    PlanNode *root5 = node5[0];
+    root5->left_tree = node5[1];
+    root5->right_tree = node5[2];
+
+    Tuple *result5 = root5->next(root5);
+    print_debug_tuple(result5);
 }

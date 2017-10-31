@@ -74,3 +74,4 @@ void heap_read_raw_tuple(Tuple tuple, FILE *heap_fp);
 
 // utils
 void print_hex_memory(void *mem);
+void print_debug_tuple(Tuple *tuple);
