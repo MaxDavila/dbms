@@ -41,14 +41,14 @@ void print_debug_tuple(Tuple *tuple) {
             case mdb_unsigned_int: {
                 int value = 0;
                 deserialize_into_int(tuple->buffer->data, tuple->buffer->offset, &value);
-                printf("%s %d | ", schema.fields[i], value);
+                printf("%s: %d | ", schema.fields[i], value);
 
                 break;
             }
             case mdb_double: {
                 double value = 0;
                 deserialize_into_double(tuple->buffer->data, tuple->buffer->offset, &value);
-                printf("%s %f | ", schema.fields[i], value);
+                printf("%s: %f | ", schema.fields[i], value);
                 break;
             }
             case mdb_unsigned_char: {
@@ -56,7 +56,7 @@ void print_debug_tuple(Tuple *tuple) {
                 char *value = malloc(size);
 
                 deserialize_into_char_array(tuple->buffer->data, value, tuple->buffer->offset, size);
-                printf("%s %s | ", schema.fields[i], value);
+                printf("%s: %s | ", schema.fields[i], value);
                 free(value);
 
                 break;
